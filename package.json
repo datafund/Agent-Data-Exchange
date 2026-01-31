@@ -2,27 +2,22 @@
   "name": "@fairdrop/agent-data-exchange",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "Autonomous data commerce for AI agents",
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
-    "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npx tsx test/escrow-sepolia.test.ts",
+    "test:erc8004": "npx tsx test/erc8004-sepolia.test.ts",
     "demo:basic": "npx tsx demos/basic-escrow.ts",
     "demo:erc8004": "npx tsx demos/erc8004-discovery.ts"
   },
-  "keywords": [
-    "ai-agents",
-    "data-exchange",
-    "escrow",
-    "swarm",
-    "erc-8004",
-    "openclaw",
-    "moltbook",
-    "fairdrop",
-    "x402"
-  ],
+  "dependencies": {
+    "@noble/curves": "^2.0.1",
+    "ethers": "^6.13.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.7.0",
+    "typescript": "^5.5.0"
+  },
   "author": "Datafund",
   "license": "MIT"
 }
