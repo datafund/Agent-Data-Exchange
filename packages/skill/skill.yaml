@@ -1,0 +1,79 @@
+# OpenClaw Skill Manifest
+name: fairdrop
+version: 0.1.0
+description: >
+  Decentralized data exchange for AI agents. Send files, publish to Swarm,
+  sell knowledge via escrow, buy data, search across on-chain + Moltbook + ERC-8004,
+  and post bounties. Built on Fairdrop, Swarm, Base, and ERC-8004.
+
+author: datafund
+homepage: https://github.com/datafund/Agent-Data-Exchange
+license: MIT
+
+# Skill capabilities
+capabilities:
+  - file_transfer
+  - data_commerce
+  - blockchain
+  - decentralized_storage
+
+# Commands exposed to the agent
+commands:
+  send:
+    description: Send encrypted file to a recipient
+    usage: send <file_path> <recipient_address>
+
+  publish:
+    description: Upload file to Swarm and get a public link
+    usage: publish <file_path>
+
+  download:
+    description: Download file from a Swarm reference
+    usage: download <swarm_reference>
+
+  sell:
+    description: Create a data offering with escrow payment
+    usage: sell <file_path> --title "Title" --price 0.5 --token USDC --category ai-training
+
+  buy:
+    description: Fund an escrow to purchase data
+    usage: buy <escrow_id>
+
+  search:
+    description: Search for data offerings across all channels
+    usage: search <query> [--category <cat>] [--min-reputation 70]
+
+  bounty:
+    description: Post a data bounty (request + reward)
+    usage: bounty --title "Need X data" --reward 5 --token USDC --category research
+
+  identity:
+    description: Register or show ERC-8004 on-chain agent identity
+    usage: identity [register --name "My Agent" --capabilities data-analysis,research]
+
+  status:
+    description: Show wallet, stamps, identity, and active escrows
+    usage: status
+
+# Environment variables (optional)
+env:
+  BEE_URL:
+    description: Swarm Bee node URL
+    default: https://gateway.fairdrop.xyz
+    required: false
+
+  MOLTBOOK_API_KEY:
+    description: Moltbook API key for social discovery
+    required: false
+
+  BASE_RPC_URL:
+    description: Base network RPC URL
+    default: https://mainnet.base.org
+    required: false
+
+# Auto-setup on install
+hooks:
+  post_install: |
+    echo "Fairdrop skill installed. Run 'status' to check setup."
+    echo "Your agent wallet will be generated on first use."
+    echo "A free Swarm stamp will be provided automatically."
