@@ -111,6 +111,8 @@ escrows.command('fund <id>')
   .action((id, opts) => run(() => cmd.escrowsFund(id, opts)))
 
 escrows.command('commit-key <id>')
+  .requiredOption('--key <key>', 'Encryption key from escrows create (0x...)')
+  .requiredOption('--salt <salt>', 'Salt from escrows create (0x...)')
   .option('--yes', 'Skip confirmation')
   .action((id, opts) => run(() => cmd.escrowsCommitKey(id, opts)))
 

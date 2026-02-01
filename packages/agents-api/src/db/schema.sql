@@ -138,5 +138,6 @@ CREATE INDEX IF NOT EXISTS idx_bounties_expires ON bounties(expires_at);
 CREATE TABLE IF NOT EXISTS monitor_state (
   chain_id INTEGER PRIMARY KEY,
   last_block INTEGER NOT NULL DEFAULT 0,
+  last_block_hash TEXT NOT NULL DEFAULT '',
   last_updated TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -27,6 +27,15 @@ export class AgentsDatabase {
   private init() {
     const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8')
     this.db.exec(schema)
+    this.migrate()
+  }
+
+  private migrate() {
+    // Add last_block_hash column if missing (for existing databases)
+    const cols = this.db.pragma('table_info(monitor_state)') as { name: string }[]
+    if (!cols.some(c => c.name === 'last_block_hash')) {
+      this.db.exec("ALTER TABLE monitor_state ADD COLUMN last_block_hash TEXT NOT NULL DEFAULT ''")
+    }
   }
 
   // === Monitor State ===
@@ -36,12 +45,60 @@ export class AgentsDatabase {
     return BigInt(row?.last_block ?? 0)
   }
 
-  setLastBlock(chainId: number, block: bigint) {
+  getLastBlockHash(chainId: number): string {
+    const row = this.db.prepare('SELECT last_block_hash FROM monitor_state WHERE chain_id = ?').get(chainId) as { last_block_hash: string } | undefined
+    return row?.last_block_hash ?? ''
+  }
+
+  setLastBlock(chainId: number, block: bigint, blockHash?: string) {
     this.db.prepare(
-      `INSERT INTO monitor_state (chain_id, last_block, last_updated)
-       VALUES (?, ?, datetime('now'))
-       ON CONFLICT(chain_id) DO UPDATE SET last_block = ?, last_updated = datetime('now')`
-    ).run(chainId, Number(block), Number(block))
+      `INSERT INTO monitor_state (chain_id, last_block, last_block_hash, last_updated)
+       VALUES (?, ?, ?, datetime('now'))
+       ON CONFLICT(chain_id) DO UPDATE SET last_block = ?, last_block_hash = ?, last_updated = datetime('now')`
+    ).run(chainId, Number(block), blockHash ?? '', Number(block), blockHash ?? '')
+  }
+
+  /**
+   * Roll back events and escrow state from a reorged block range.
+   * Deletes events >= fromBlock, then rebuilds escrow state from remaining events.
+   */
+  rollbackFromBlock(chainId: number, fromBlock: number): number[] {
+    // Find affected escrow IDs before deleting
+    const affected = this.db.prepare(
+      'SELECT DISTINCT escrow_id FROM escrow_events WHERE chain_id = ? AND block_number >= ?'
+    ).all(chainId, fromBlock) as { escrow_id: number }[]
+    const escrowIds = affected.map(r => r.escrow_id)
+
+    // Delete reorged events
+    this.db.prepare(
+      'DELETE FROM escrow_events WHERE chain_id = ? AND block_number >= ?'
+    ).run(chainId, fromBlock)
+
+    // For each affected escrow, rebuild state from remaining events
+    for (const escrowId of escrowIds) {
+      const events = this.db.prepare(
+        'SELECT event_type, event_data, block_timestamp FROM escrow_events WHERE escrow_id = ? ORDER BY block_number, log_index'
+      ).all(escrowId) as { event_type: string; event_data: string; block_timestamp: number }[]
+
+      if (events.length === 0) {
+        // No events left — delete the escrow entirely
+        this.db.prepare('DELETE FROM escrows WHERE id = ?').run(escrowId)
+      } else {
+        // Reset to last known state from the final event
+        const last = events[events.length - 1]
+        const stateMap: Record<string, string> = {
+          created: 'created', funded: 'funded', cancelled: 'cancelled',
+          expired: 'expired', key_committed: 'key_committed', key_revealed: 'released',
+          claimed: 'claimed', dispute_raised: 'disputed',
+          seller_responded: 'seller_responded', dispute_resolved: 'resolved_seller',
+          emergency_withdrawal: 'expired',
+        }
+        const state = stateMap[last.event_type] ?? 'created'
+        this.db.prepare('UPDATE escrows SET state = ?, updated_at = datetime(\'now\') WHERE id = ?').run(state, escrowId)
+      }
+    }
+
+    return escrowIds
   }
 
   // === Escrow Events ===

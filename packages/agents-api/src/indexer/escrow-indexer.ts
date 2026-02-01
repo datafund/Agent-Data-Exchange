@@ -105,7 +105,9 @@ export class EscrowIndexer {
         : from + BigInt(this.catchupBatchSize) - 1n
 
       await this.fetchAndProcessEvents(chain, from, to)
-      this.db.setLastBlock(chain.chainId, to)
+      // Store block hash for the batch end block (for reorg detection)
+      const batchBlock = await client.getBlock({ blockNumber: to }).catch(() => null)
+      this.db.setLastBlock(chain.chainId, to, batchBlock?.hash ?? '')
       from = to + 1n
     }
   }
@@ -116,13 +118,44 @@ export class EscrowIndexer {
       const client = this.clients.get(chain.chainId)!
       const currentBlock = await client.getBlockNumber()
       const safeBlock = currentBlock - BigInt(chain.confirmations)
-      const lastBlock = this.db.getLastBlock(chain.chainId)
-      const fromBlock = lastBlock > 0n ? lastBlock + 1n : chain.startBlock
+      let lastBlock = this.db.getLastBlock(chain.chainId)
 
+      // Reorg detection: verify stored block hash matches chain
+      if (lastBlock > 0n) {
+        const storedHash = this.db.getLastBlockHash(chain.chainId)
+        if (storedHash) {
+          const block = await client.getBlock({ blockNumber: lastBlock }).catch(() => null)
+          if (block && block.hash !== storedHash) {
+            console.warn(`[indexer] ${chain.name}: reorg detected at block ${lastBlock} (stored=${storedHash.slice(0, 10)}, chain=${block.hash?.slice(0, 10)})`)
+            // Roll back and reprocess from the reorged block
+            const affected = this.db.rollbackFromBlock(chain.chainId, Number(lastBlock))
+            if (affected.length > 0) {
+              console.warn(`[indexer] ${chain.name}: rolled back ${affected.length} escrows: ${affected.join(', ')}`)
+              // Recalculate reputation for affected escrows
+              for (const escrowId of affected) {
+                const escrow = this.db.getEscrow(escrowId)
+                if (escrow) {
+                  this.calculator.recalculateWallet(escrow.seller)
+                  if (escrow.buyer) this.calculator.recalculateWallet(escrow.buyer)
+                  if (escrow.seller_agent_id > 0) this.calculator.recalculateAgent(escrow.seller_agent_id)
+                  if (escrow.buyer_agent_id > 0) this.calculator.recalculateAgent(escrow.buyer_agent_id)
+                }
+              }
+            }
+            lastBlock = lastBlock - 1n
+            this.db.setLastBlock(chain.chainId, lastBlock, '')
+          }
+        }
+      }
+
+      const fromBlock = lastBlock > 0n ? lastBlock + 1n : chain.startBlock
       if (fromBlock > safeBlock) return
 
       await this.fetchAndProcessEvents(chain, fromBlock, safeBlock)
-      this.db.setLastBlock(chain.chainId, safeBlock)
+
+      // Store block hash of the safe block for reorg detection
+      const safeBlockData = await client.getBlock({ blockNumber: safeBlock }).catch(() => null)
+      this.db.setLastBlock(chain.chainId, safeBlock, safeBlockData?.hash ?? '')
     } catch (err) {
       console.error(`[indexer] ${chain.name}: poll error:`, err)
     }

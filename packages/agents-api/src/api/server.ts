@@ -18,8 +18,10 @@ const __dirname = dirname(__filename)
 export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   const app = express()
 
-  // Trust proxy (Caddy reverse proxy)
-  app.set('trust proxy', 1)
+  // Trust proxy: only trust the immediate reverse proxy (Caddy on loopback).
+  // In production Caddy runs on the same host; 'loopback' accepts 127.0.0.1/::1 only.
+  // Falls back to 1 hop if TRUST_PROXY is set (e.g. for cloud load balancers).
+  app.set('trust proxy', process.env.TRUST_PROXY || 'loopback')
 
   // CORS: allow fairdrop.xyz origins
   app.use(cors({

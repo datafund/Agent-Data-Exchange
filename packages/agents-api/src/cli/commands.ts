@@ -2,9 +2,10 @@
  * All CLI command handlers. Each returns data; formatting handled by caller.
  */
 
-import { createPublicClient, createWalletClient, http, parseEther, formatEther, type PublicClient, type WalletClient } from 'viem'
+import { createPublicClient, createWalletClient, http, parseEther, formatEther, keccak256, concat, type PublicClient, type WalletClient } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { base } from 'viem/chains'
+import { randomBytes } from 'crypto'
 import { apiFetch, apiPost, getBaseUrl } from './api.js'
 import { CLIError } from './errors.js'
 import { DataEscrowABI } from '../abi/DataEscrow.js'
@@ -166,8 +167,10 @@ export async function escrowsCreate(opts: { contentHash: string; price: string; 
   const { pub, wallet, address } = await getChainClient()
   const amount = parseEther(opts.price)
 
-  // Zero key commitment for now (placeholder)
-  const keyCommitment = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`
+  // Generate real encryption key and salt for commit-reveal scheme
+  const encryptionKey = `0x${randomBytes(32).toString('hex')}` as `0x${string}`
+  const salt = `0x${randomBytes(32).toString('hex')}` as `0x${string}`
+  const keyCommitment = keccak256(concat([encryptionKey, salt]))
   const nativeToken = '0x0000000000000000000000000000000000000000' as `0x${string}`
 
   // Estimate gas with actual contract call
@@ -215,7 +218,16 @@ export async function escrowsCreate(opts: { contentHash: string; price: string; 
     throw new CLIError('ERR_TX_REVERTED', 'Transaction reverted', 'Check contract state and parameters')
   }
 
-  return { txHash: hash, status: receipt.status, blockNumber: Number(receipt.blockNumber) }
+  // Return key and salt — seller MUST save these for the reveal phase
+  console.error(`\nIMPORTANT: Save the encryption key and salt below. You need them to reveal the key after funding.`)
+  return {
+    txHash: hash,
+    status: receipt.status,
+    blockNumber: Number(receipt.blockNumber),
+    encryptionKey,
+    salt,
+    keyCommitment,
+  }
 }
 
 export async function escrowsFund(id: string, opts: { yes?: boolean }) {
@@ -258,12 +270,20 @@ export async function escrowsFund(id: string, opts: { yes?: boolean }) {
   return { txHash: hash, status: receipt.status, blockNumber: Number(receipt.blockNumber) }
 }
 
-export async function escrowsCommitKey(id: string, opts: { yes?: boolean }) {
+export async function escrowsCommitKey(id: string, opts: { key: string; salt: string; yes?: boolean }) {
   requireConfirmation(opts)
   const { pub, wallet, address } = await getChainClient()
   const escrowId = parseBigInt(id, 'escrow ID')
 
+  if (!opts.key || !opts.salt) {
+    throw new CLIError('ERR_INVALID_ARGUMENT', '--key and --salt are required (from escrows create output)')
+  }
+
+  // Compute commitment = keccak256(key || salt) — must match what was used at creation
+  const commitment = keccak256(concat([opts.key as `0x${string}`, opts.salt as `0x${string}`]))
+
   console.error(`Commit key for escrow #${id}`)
+  console.error(`Commitment: ${commitment}`)
   console.error(`From: ${address}`)
 
   if (!opts.yes && process.stdin.isTTY) {
@@ -274,8 +294,6 @@ export async function escrowsCommitKey(id: string, opts: { yes?: boolean }) {
     if (answer.toLowerCase() !== 'y') { console.error('Cancelled.'); process.exit(0) }
   }
 
-  // Placeholder commitment
-  const commitment = '0x0000000000000000000000000000000000000000000000000000000000000001' as `0x${string}`
   const hash = await wallet.writeContract({
     address: ESCROW_ADDRESS,
     abi: DataEscrowABI,

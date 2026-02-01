@@ -90,6 +90,8 @@ export const SCHEMA: { version: string; commands: CommandDef[] } = {
     ]},
     { name: 'escrows commit-key', description: 'Commit key release', auth: 'chain', params: [
       { name: 'id', type: 'string', required: true, description: 'Escrow ID' },
+      { name: '--key', type: 'string', required: true, description: 'Encryption key from escrows create (0x...)' },
+      { name: '--salt', type: 'string', required: true, description: 'Salt from escrows create (0x...)' },
       { name: '--yes', type: 'boolean', description: 'Skip confirmation prompt' },
     ]},
     { name: 'escrows reveal-key', description: 'Reveal key to buyer', auth: 'chain', params: [

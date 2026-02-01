@@ -30,7 +30,7 @@ export function loadConfig(): Config {
       rpcUrl: process.env.BASE_RPC_URL,
       escrowContract: process.env.BASE_ESCROW_CONTRACT as `0x${string}`,
       startBlock: BigInt(process.env.BASE_START_BLOCK || '0'),
-      confirmations: 2,
+      confirmations: parseInt(process.env.BASE_CONFIRMATIONS || '12', 10),
     })
   }
 
@@ -42,7 +42,7 @@ export function loadConfig(): Config {
       rpcUrl: process.env.SEPOLIA_RPC_URL,
       escrowContract: process.env.SEPOLIA_ESCROW_CONTRACT as `0x${string}`,
       startBlock: BigInt(process.env.SEPOLIA_START_BLOCK || '0'),
-      confirmations: 2,
+      confirmations: parseInt(process.env.SEPOLIA_CONFIRMATIONS || '6', 10),
     })
   }
 
