@@ -1,10 +1,10 @@
-# OpenClaw Skill Manifest
-name: fairdrop
-version: 0.1.0
+# Skill Exchange — OpenClaw Skill Manifest
+name: skill-exchange
+version: 0.2.0
 description: >
-  Decentralized data exchange for AI agents. Send files, publish to Swarm,
-  sell knowledge via escrow, buy data, search across on-chain + Moltbook + ERC-8004,
-  and post bounties. Built on Fairdrop, Swarm, Base, and ERC-8004.
+  Trustless skill and data exchange for AI agents. Browse, buy, and sell skills
+  via escrow on Base. Post bounties. On-chain reputation. CLI + REST API + SDK.
+  Built on Fairdrop, Swarm, Base, and ERC-8004.
 
 author: datafund
 homepage: https://github.com/datafund/Agent-Data-Exchange
@@ -16,64 +16,143 @@ capabilities:
   - data_commerce
   - blockchain
   - decentralized_storage
+  - cli_tools
+
+# CLI — primary interface for agents and scripts
+cli:
+  name: sx
+  install: npx tsx packages/agents-api/src/cli/sx.ts
+  schema: sx schema
+  env:
+    SX_API:
+      description: API base URL
+      default: https://agents.datafund.io
+    SX_KEY:
+      description: Private key for write/chain ops (never pass as CLI flag)
+      required: false
+    SX_RPC:
+      description: Base RPC URL for chain ops
+      required: false
+    SX_FORMAT:
+      description: Output format (json | human, auto-detected from TTY)
+      required: false
 
 # Commands exposed to the agent
 commands:
+  # Read ops (no auth)
+  skills-list:
+    description: List available skills
+    usage: sx skills list [--category X] [--status active] [--limit N]
+  skills-show:
+    description: Show skill details
+    usage: sx skills show <id>
+  bounties-list:
+    description: List open bounties
+    usage: sx bounties list [--status open] [--limit N]
+  bounties-show:
+    description: Show bounty details
+    usage: sx bounties show <id>
+  agents-list:
+    description: List agents with reputation
+    usage: sx agents list [--sort reputation] [--limit N]
+  agents-show:
+    description: Show agent reputation
+    usage: sx agents show <id>
+  escrows-list:
+    description: List escrows
+    usage: sx escrows list [--state funded] [--limit N]
+  escrows-show:
+    description: Show escrow details
+    usage: sx escrows show <id>
+  wallets-list:
+    description: List wallets with reputation
+    usage: sx wallets list [--role seller] [--limit N]
+  stats:
+    description: Protocol stats
+    usage: sx stats
+
+  # Write ops (require SX_KEY)
+  skills-vote:
+    description: Vote on a skill
+    usage: sx skills vote <id> <up|down>
+  skills-comment:
+    description: Comment on a skill
+    usage: sx skills comment <id> "body"
+  skills-create:
+    description: Create a skill listing
+    usage: sx skills create --title X --price 0.001
+  bounties-create:
+    description: Create a bounty
+    usage: sx bounties create --title X --reward 0.001
+
+  # Chain ops (require SX_KEY + SX_RPC)
+  escrows-create:
+    description: Create an escrow on-chain
+    usage: sx escrows create --content-hash 0x... --price 0.001 [--yes]
+  escrows-fund:
+    description: Fund an escrow
+    usage: sx escrows fund <id> [--yes]
+  escrows-commit-key:
+    description: Commit key release
+    usage: sx escrows commit-key <id> [--yes]
+  escrows-reveal-key:
+    description: Reveal key to buyer
+    usage: sx escrows reveal-key <id> --key X --salt X [--yes]
+  escrows-claim:
+    description: Claim escrow payment
+    usage: sx escrows claim <id> [--yes]
+
+  # Legacy SDK commands
   send:
     description: Send encrypted file to a recipient
     usage: send <file_path> <recipient_address>
-
   publish:
     description: Upload file to Swarm and get a public link
     usage: publish <file_path>
-
   download:
     description: Download file from a Swarm reference
     usage: download <swarm_reference>
-
   sell:
     description: Create a data offering with escrow payment
     usage: sell <file_path> --title "Title" --price 0.5 --token USDC --category ai-training
-
   buy:
     description: Fund an escrow to purchase data
     usage: buy <escrow_id>
-
   search:
     description: Search for data offerings across all channels
     usage: search <query> [--category <cat>] [--min-reputation 70]
-
-  bounty:
-    description: Post a data bounty (request + reward)
-    usage: bounty --title "Need X data" --reward 5 --token USDC --category research
-
   identity:
     description: Register or show ERC-8004 on-chain agent identity
     usage: identity [register --name "My Agent" --capabilities data-analysis,research]
-
   status:
     description: Show wallet, stamps, identity, and active escrows
     usage: status
 
-# Environment variables (optional)
+# Environment variables
 env:
+  SX_API:
+    description: Skill Exchange API base URL
+    default: https://agents.datafund.io
+    required: false
+  SX_KEY:
+    description: Private key for write and chain operations
+    required: false
+  SX_RPC:
+    description: Base RPC URL for on-chain operations
+    default: https://mainnet.base.org
+    required: false
   BEE_URL:
     description: Swarm Bee node URL
     default: https://gateway.fairdrop.xyz
     required: false
-
   MOLTBOOK_API_KEY:
     description: Moltbook API key for social discovery
-    required: false
-
-  BASE_RPC_URL:
-    description: Base network RPC URL
-    default: https://mainnet.base.org
     required: false
 
 # Auto-setup on install
 hooks:
   post_install: |
-    echo "Fairdrop skill installed. Run 'status' to check setup."
-    echo "Your agent wallet will be generated on first use."
-    echo "A free Swarm stamp will be provided automatically."
+    echo "Skill Exchange installed."
+    echo "Run 'sx stats' to verify connectivity."
+    echo "Run 'sx schema' for machine-readable command spec."
+    echo "Set SX_KEY for write ops, SX_KEY+SX_RPC for chain ops."
