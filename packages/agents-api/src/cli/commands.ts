@@ -17,15 +17,17 @@ const CHAIN_TIMEOUT_MS = 60_000
 // ── Helpers ──
 
 function requireKey(): `0x${string}` {
-  const key = process.env.SX_KEY
+  const key = process.env.SX_KEY?.trim()
   if (!key) throw new CLIError('ERR_MISSING_KEY', 'SX_KEY environment variable not set', 'Export SX_KEY=0x...')
   if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new CLIError('ERR_INVALID_SIGNATURE', 'SX_KEY is not a valid 64-char hex private key')
+  // Remove from env to minimize exposure window
+  delete process.env.SX_KEY
   return key as `0x${string}`
 }
 
 function requireRpc(): string {
-  const rpc = process.env.SX_RPC
-  if (!rpc) throw new CLIError('ERR_MISSING_KEY', 'SX_RPC environment variable not set for chain ops', 'Export SX_RPC=https://...')
+  const rpc = process.env.SX_RPC?.trim()
+  if (!rpc) throw new CLIError('ERR_MISSING_RPC', 'SX_RPC environment variable not set for chain ops', 'Export SX_RPC=https://...')
   return rpc
 }
 
@@ -45,16 +47,24 @@ async function getChainClient(): Promise<{ pub: PublicClient; wallet: WalletClie
 }
 
 function requireConfirmation(opts: { yes?: boolean }): void {
-  if (!opts.yes && !process.stdout.isTTY) {
-    throw new CLIError('ERR_MISSING_KEY', 'Chain ops require --yes flag in non-TTY mode', 'Add --yes to confirm')
+  if (!opts.yes && (!process.stdout.isTTY || !process.stdin.isTTY)) {
+    throw new CLIError('ERR_CONFIRMATION_REQUIRED', 'Chain ops require --yes flag in non-TTY mode', 'Add --yes to confirm')
   }
 }
 
 interface ListOpts { limit?: string; offset?: string }
 function listParams(opts: ListOpts): string {
-  const limit = opts.limit || '50'
-  const offset = opts.offset || '0'
+  const limit = Math.max(1, Math.min(100, parseInt(opts.limit || '50', 10) || 50))
+  const offset = Math.max(0, parseInt(opts.offset || '0', 10) || 0)
   return `limit=${limit}&offset=${offset}`
+}
+
+function parseBigInt(value: string, label: string): bigint {
+  try {
+    return BigInt(value)
+  } catch {
+    throw new CLIError('ERR_INVALID_ARGUMENT', `Invalid ${label}: "${value}" is not a valid integer`)
+  }
 }
 
 // ── Read Commands ──
@@ -117,36 +127,36 @@ export async function walletsList(opts: ListOpts & { role?: string }) {
 // ── Write Commands (API + EIP-191 signing) ──
 
 export async function skillsVote(id: string, direction: string) {
-  requireKey()
+  const key = requireKey()
   if (direction !== 'up' && direction !== 'down') {
-    throw new CLIError('ERR_INVALID_ADDRESS', 'Direction must be "up" or "down"')
+    throw new CLIError('ERR_INVALID_ARGUMENT', 'Direction must be "up" or "down"')
   }
-  return apiPost(`/skills/${encodeURIComponent(id)}/vote`, { direction })
+  return apiPost(`/skills/${encodeURIComponent(id)}/vote`, { direction }, key)
 }
 
 export async function skillsComment(id: string, body: string) {
-  requireKey()
-  return apiPost(`/skills/${encodeURIComponent(id)}/comments`, { body })
+  const key = requireKey()
+  return apiPost(`/skills/${encodeURIComponent(id)}/comments`, { body }, key)
 }
 
 export async function skillsCreate(opts: { title: string; price: string; description?: string; category?: string }) {
-  requireKey()
+  const key = requireKey()
   return apiPost('/skills', {
     title: opts.title,
     price: opts.price,
     description: opts.description,
     category: opts.category,
-  })
+  }, key)
 }
 
 export async function bountiesCreate(opts: { title: string; reward: string; description?: string; category?: string }) {
-  requireKey()
+  const key = requireKey()
   return apiPost('/bounties', {
     title: opts.title,
     rewardAmount: opts.reward,
     description: opts.description,
     category: opts.category,
-  })
+  }, key)
 }
 
 // ── Chain Commands ──
@@ -156,23 +166,31 @@ export async function escrowsCreate(opts: { contentHash: string; price: string; 
   const { pub, wallet, address } = await getChainClient()
   const amount = parseEther(opts.price)
 
-  // Preview
-  const gasEstimate = await pub.estimateGas({
+  // Zero key commitment for now (placeholder)
+  const keyCommitment = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`
+  const nativeToken = '0x0000000000000000000000000000000000000000' as `0x${string}`
+
+  // Estimate gas with actual contract call
+  const gasEstimate = await pub.estimateContractGas({
+    address: ESCROW_ADDRESS,
+    abi: DataEscrowABI,
+    functionName: 'createEscrow',
+    args: [opts.contentHash as `0x${string}`, keyCommitment, nativeToken, amount, 7n],
     account: address,
-    to: ESCROW_ADDRESS,
-    data: '0x', // placeholder, real estimate below
   }).catch(() => 0n)
+
+  const gasPrice = await pub.getGasPrice().catch(() => 0n)
+  const gasCost = gasEstimate * gasPrice
 
   console.error(`Create escrow: ${opts.price} ETH to ${ESCROW_ADDRESS}`)
   console.error(`From: ${address}`)
-  if (gasEstimate > 0n) console.error(`Estimated gas: ~${formatEther(gasEstimate)} ETH`)
+  if (gasCost > 0n) console.error(`Estimated gas cost: ~${formatEther(gasCost)} ETH`)
 
-  if (gasEstimate > GAS_SAFETY_CAP) {
-    throw new CLIError('ERR_GAS_TOO_HIGH', `Gas estimate ${formatEther(gasEstimate)} ETH exceeds safety cap of ${formatEther(GAS_SAFETY_CAP)} ETH`, 'Gas may be high, try again later')
+  if (gasCost > GAS_SAFETY_CAP) {
+    throw new CLIError('ERR_GAS_TOO_HIGH', `Gas cost ${formatEther(gasCost)} ETH exceeds safety cap of ${formatEther(GAS_SAFETY_CAP)} ETH`, 'Gas may be high, try again later')
   }
 
-  if (!opts.yes) {
-    // Interactive confirmation via readline
+  if (!opts.yes && process.stdin.isTTY) {
     const { createInterface } = await import('readline')
     const rl = createInterface({ input: process.stdin, output: process.stderr })
     const answer = await new Promise<string>(resolve => rl.question('Confirm? [y/N] ', resolve))
@@ -182,10 +200,6 @@ export async function escrowsCreate(opts: { contentHash: string; price: string; 
       process.exit(0)
     }
   }
-
-  // Zero key commitment for now (placeholder)
-  const keyCommitment = '0x0000000000000000000000000000000000000000000000000000000000000000' as `0x${string}`
-  const nativeToken = '0x0000000000000000000000000000000000000000' as `0x${string}`
 
   const hash = await wallet.writeContract({
     address: ESCROW_ADDRESS,
@@ -207,16 +221,22 @@ export async function escrowsCreate(opts: { contentHash: string; price: string; 
 export async function escrowsFund(id: string, opts: { yes?: boolean }) {
   requireConfirmation(opts)
   const { pub, wallet, address } = await getChainClient()
-  const escrowId = BigInt(id)
+  const escrowId = parseBigInt(id, 'escrow ID')
 
-  // Fetch escrow to get amount
-  const escrow = await apiFetch<{ amount?: string }>(`/escrows/${id}`)
-  const amount = escrow.amount ? BigInt(escrow.amount) : 0n
+  // Read amount from on-chain contract (never trust off-chain API for tx params)
+  const escrowData = await pub.readContract({
+    address: ESCROW_ADDRESS,
+    abi: DataEscrowABI,
+    functionName: 'getEscrow',
+    args: [escrowId],
+  }).catch(() => null) as { amount?: bigint } | null
+
+  const amount = escrowData?.amount ?? 0n
 
   console.error(`Fund escrow #${id}: ${formatEther(amount)} ETH`)
   console.error(`From: ${address}`)
 
-  if (!opts.yes) {
+  if (!opts.yes && process.stdin.isTTY) {
     const { createInterface } = await import('readline')
     const rl = createInterface({ input: process.stdin, output: process.stderr })
     const answer = await new Promise<string>(resolve => rl.question('Confirm? [y/N] ', resolve))
@@ -241,12 +261,12 @@ export async function escrowsFund(id: string, opts: { yes?: boolean }) {
 export async function escrowsCommitKey(id: string, opts: { yes?: boolean }) {
   requireConfirmation(opts)
   const { pub, wallet, address } = await getChainClient()
-  const escrowId = BigInt(id)
+  const escrowId = parseBigInt(id, 'escrow ID')
 
   console.error(`Commit key for escrow #${id}`)
   console.error(`From: ${address}`)
 
-  if (!opts.yes) {
+  if (!opts.yes && process.stdin.isTTY) {
     const { createInterface } = await import('readline')
     const rl = createInterface({ input: process.stdin, output: process.stderr })
     const answer = await new Promise<string>(resolve => rl.question('Confirm? [y/N] ', resolve))
@@ -272,12 +292,12 @@ export async function escrowsCommitKey(id: string, opts: { yes?: boolean }) {
 export async function escrowsRevealKey(id: string, opts: { key: string; salt: string; yes?: boolean }) {
   requireConfirmation(opts)
   const { pub, wallet, address } = await getChainClient()
-  const escrowId = BigInt(id)
+  const escrowId = parseBigInt(id, 'escrow ID')
 
   console.error(`Reveal key for escrow #${id}`)
   console.error(`From: ${address}`)
 
-  if (!opts.yes) {
+  if (!opts.yes && process.stdin.isTTY) {
     const { createInterface } = await import('readline')
     const rl = createInterface({ input: process.stdin, output: process.stderr })
     const answer = await new Promise<string>(resolve => rl.question('Confirm? [y/N] ', resolve))
@@ -301,12 +321,12 @@ export async function escrowsRevealKey(id: string, opts: { key: string; salt: st
 export async function escrowsClaim(id: string, opts: { yes?: boolean }) {
   requireConfirmation(opts)
   const { pub, wallet, address } = await getChainClient()
-  const escrowId = BigInt(id)
+  const escrowId = parseBigInt(id, 'escrow ID')
 
   console.error(`Claim payment for escrow #${id}`)
   console.error(`From: ${address}`)
 
-  if (!opts.yes) {
+  if (!opts.yes && process.stdin.isTTY) {
     const { createInterface } = await import('readline')
     const rl = createInterface({ input: process.stdin, output: process.stderr })
     const answer = await new Promise<string>(resolve => rl.question('Confirm? [y/N] ', resolve))
@@ -331,7 +351,7 @@ export async function escrowsClaim(id: string, opts: { yes?: boolean }) {
 
 export async function dashboardOverview() {
   const token = process.env.SX_DASHBOARD_TOKEN
-  if (!token) throw new CLIError('ERR_MISSING_KEY', 'SX_DASHBOARD_TOKEN not set', 'Export SX_DASHBOARD_TOKEN=...')
+  if (!token) throw new CLIError('ERR_MISSING_TOKEN', 'SX_DASHBOARD_TOKEN not set', 'Export SX_DASHBOARD_TOKEN=...')
   return apiFetch('/dashboard/overview', {
     headers: { 'Authorization': `Bearer ${token}` },
   })
@@ -340,10 +360,14 @@ export async function dashboardOverview() {
 // ── Config ──
 
 export function configShow() {
-  const mask = (v?: string) => v ? `${v.slice(0, 6)}...${v.slice(-4)}` : '(not set)'
+  const mask = (v?: string) => {
+    if (!v) return '(not set)'
+    if (v.length <= 12) return '(set)'
+    return `${v.slice(0, 6)}...${v.slice(-4)}`
+  }
   return {
     SX_API: process.env.SX_API || 'https://agents.datafund.io',
-    SX_KEY: process.env.SX_KEY ? mask(process.env.SX_KEY) : '(not set)',
+    SX_KEY: mask(process.env.SX_KEY),
     SX_RPC: process.env.SX_RPC || '(not set)',
     SX_FORMAT: process.env.SX_FORMAT || '(auto)',
     contract: ESCROW_ADDRESS,

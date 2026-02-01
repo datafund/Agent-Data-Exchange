@@ -322,11 +322,17 @@ export class AgentsDatabase {
       SELECT COUNT(*) as cnt, SUM(CASE WHEN completed=1 THEN 1 ELSE 0 END) as completed,
         SUM(CASE WHEN disputed=1 THEN 1 ELSE 0 END) as disputed,
         SUM(CASE WHEN state='cancelled' THEN 1 ELSE 0 END) as cancelled,
-        COALESCE(SUM(CAST(amount AS INTEGER)), 0) as vol,
         AVG(CASE WHEN time_to_release IS NOT NULL THEN time_to_release END) as avg_delivery,
         MIN(created_at) as first_at, MAX(created_at) as last_at
       FROM escrows WHERE seller_agent_id = ?
     `).get(agentId) as Record<string, number | null>
+
+    // Sum volume in JS using BigInt to avoid SQLite integer overflow
+    const amounts = this.db.prepare(
+      'SELECT amount FROM escrows WHERE seller_agent_id = ? AND funded_at IS NOT NULL'
+    ).all(agentId) as { amount: string }[]
+    let totalVol = 0n
+    for (const row of amounts) { try { totalVol += BigInt(row.amount) } catch { /* skip bad values */ } }
 
     const buyer = this.db.prepare(`
       SELECT COUNT(*) as cnt, SUM(CASE WHEN completed=1 THEN 1 ELSE 0 END) as completed,
@@ -342,7 +348,7 @@ export class AgentsDatabase {
       asBuyerFunded: (buyer.cnt ?? 0) as number,
       asBuyerCompleted: (buyer.completed ?? 0) as number,
       asBuyerDisputed: (buyer.disputed ?? 0) as number,
-      totalVolume: String(seller.vol ?? 0),
+      totalVolume: totalVol.toString(),
       avgDeliverySeconds: seller.avg_delivery as number | null,
       firstEscrowAt: seller.first_at as number | null,
       lastEscrowAt: seller.last_at as number | null,
@@ -355,22 +361,29 @@ export class AgentsDatabase {
     firstEscrowAt: number | null; lastEscrowAt: number | null;
   } {
     const col = role === 'seller' ? 'seller' : 'buyer'
+    const addr = address.toLowerCase()
     const row = this.db.prepare(`
       SELECT COUNT(*) as cnt, SUM(CASE WHEN completed=1 THEN 1 ELSE 0 END) as completed,
         SUM(CASE WHEN disputed=1 THEN 1 ELSE 0 END) as disputed,
         SUM(CASE WHEN state='cancelled' THEN 1 ELSE 0 END) as cancelled,
-        COALESCE(SUM(CAST(amount AS INTEGER)), 0) as vol,
         AVG(CASE WHEN time_to_release IS NOT NULL THEN time_to_release END) as avg_delivery,
         MIN(created_at) as first_at, MAX(created_at) as last_at
       FROM escrows WHERE ${col} = ?
-    `).get(address.toLowerCase()) as Record<string, number | null>
+    `).get(addr) as Record<string, number | null>
+
+    // Sum volume in JS using BigInt to avoid SQLite integer overflow
+    const amounts = this.db.prepare(
+      `SELECT amount FROM escrows WHERE ${col} = ? AND funded_at IS NOT NULL`
+    ).all(addr) as { amount: string }[]
+    let totalVol = 0n
+    for (const r of amounts) { try { totalVol += BigInt(r.amount) } catch { /* skip bad values */ } }
 
     return {
       total: (row.cnt ?? 0) as number,
       completed: (row.completed ?? 0) as number,
       disputed: (row.disputed ?? 0) as number,
       cancelled: (row.cancelled ?? 0) as number,
-      totalVolume: String(row.vol ?? 0),
+      totalVolume: totalVol.toString(),
       avgDeliverySeconds: row.avg_delivery as number | null,
       firstEscrowAt: row.first_at as number | null,
       lastEscrowAt: row.last_at as number | null,
@@ -433,8 +446,9 @@ export class AgentsDatabase {
         bounty.createdAt, bounty.expiresAt,
       )
       return true
-    } catch {
-      return false
+    } catch (err: unknown) {
+      if ((err as { code?: string }).code?.startsWith('SQLITE_CONSTRAINT')) return false
+      throw err
     }
   }
 

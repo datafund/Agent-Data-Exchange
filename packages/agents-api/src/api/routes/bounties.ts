@@ -11,8 +11,27 @@ export function bountyRoutes(db: AgentsDatabase): Router {
     const verifiedAddress = (req as any).verifiedAddress as string
     const { posterAgentId, title, description, category, rewardAmount, rewardToken, tags, moltbookPostId, expiresIn } = req.body
 
-    if (!title) {
+    if (!title || typeof title !== 'string') {
       res.status(400).json({ error: 'title is required' })
+      return
+    }
+    if (title.length > 500) {
+      res.status(400).json({ error: 'title must be 500 characters or less' })
+      return
+    }
+    if (description && typeof description === 'string' && description.length > 5000) {
+      res.status(400).json({ error: 'description must be 5000 characters or less' })
+      return
+    }
+    if (tags && Array.isArray(tags) && tags.length > 20) {
+      res.status(400).json({ error: 'Maximum 20 tags allowed' })
+      return
+    }
+
+    // Validate expiresIn: 1 hour to 90 days
+    const parsedExpiresIn = expiresIn != null ? Number(expiresIn) : 7 * 86400
+    if (isNaN(parsedExpiresIn) || parsedExpiresIn < 3600 || parsedExpiresIn > 90 * 86400) {
+      res.status(400).json({ error: 'expiresIn must be between 3600 (1 hour) and 7776000 (90 days) seconds' })
       return
     }
 
@@ -21,7 +40,7 @@ export function bountyRoutes(db: AgentsDatabase): Router {
 
     const id = randomUUID()
     const now = Math.floor(Date.now() / 1000)
-    const expiresAt = now + (expiresIn ?? 7 * 86400) // default 7 days
+    const expiresAt = now + parsedExpiresIn
 
     const created = db.createBounty({
       id,
@@ -57,8 +76,8 @@ export function bountyRoutes(db: AgentsDatabase): Router {
       poster: poster as string,
       category: category as string,
       status: (status as string) ?? 'open',
-      limit: limit ? Number(limit) : 50,
-      offset: offset ? Number(offset) : 0,
+      limit: Math.min(limit ? Number(limit) : 50, 100),
+      offset: Math.max(offset ? Number(offset) : 0, 0),
     })
     const total = db.countBounties({ poster: poster as string, status: (status as string) ?? 'open' })
 
@@ -83,6 +102,7 @@ export function bountyRoutes(db: AgentsDatabase): Router {
 
   // POST /bounties/:id/fulfill — link bounty to escrow (requires signature)
   router.post('/:id/fulfill', verifySignature, (req, res) => {
+    const verifiedAddress = (req as any).verifiedAddress as string
     const bounty = db.getBounty(req.params.id)
     if (!bounty) {
       res.status(404).json({ error: 'Bounty not found' })
@@ -96,6 +116,21 @@ export function bountyRoutes(db: AgentsDatabase): Router {
     const { escrowId } = req.body
     if (!escrowId) {
       res.status(400).json({ error: 'escrowId is required' })
+      return
+    }
+
+    // Verify the escrow exists and the fulfiller is the seller
+    const escrow = db.getEscrow(Number(escrowId))
+    if (!escrow) {
+      res.status(400).json({ error: 'Escrow not found' })
+      return
+    }
+    if (escrow.seller.toLowerCase() !== verifiedAddress) {
+      res.status(403).json({ error: 'Only the escrow seller can fulfill a bounty' })
+      return
+    }
+    if (!escrow.completed) {
+      res.status(400).json({ error: 'Escrow must be completed before fulfilling a bounty' })
       return
     }
 

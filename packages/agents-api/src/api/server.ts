@@ -38,7 +38,16 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
     legacyHeaders: false,
   }))
 
-  app.use(express.json())
+  app.use(express.json({ limit: '100kb' }))
+
+  // Security headers
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('X-Frame-Options', 'DENY')
+    res.setHeader('X-XSS-Protection', '0')
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+    next()
+  })
 
   // API v1 routes
   const v1 = express.Router()

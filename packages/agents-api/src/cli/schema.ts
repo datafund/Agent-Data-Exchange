@@ -106,5 +106,6 @@ export const SCHEMA: { version: string; commands: CommandDef[] } = {
     // Meta
     { name: 'schema', description: 'Machine-readable command spec', auth: 'none', params: [] },
     { name: 'config show', description: 'Show active config (secrets masked)', auth: 'none', params: [] },
+    { name: 'dashboard', description: 'Team dashboard overview', auth: 'sign', params: [] },
   ],
 }

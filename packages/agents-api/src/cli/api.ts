@@ -2,12 +2,13 @@
  * Thin API client for agents.datafund.io REST API.
  */
 
+import { privateKeyToAccount } from 'viem/accounts'
 import { CLIError } from './errors.js'
 
 const TIMEOUT_MS = 30_000
 
 export function getBaseUrl(): string {
-  return process.env.SX_API || 'https://agents.datafund.io'
+  return (process.env.SX_API || 'https://agents.datafund.io').trim()
 }
 
 export async function apiFetch<T = unknown>(path: string, opts?: RequestInit): Promise<T> {
@@ -44,9 +45,25 @@ export async function apiFetch<T = unknown>(path: string, opts?: RequestInit): P
   return res.json() as Promise<T>
 }
 
-export async function apiPost<T = unknown>(path: string, body: Record<string, unknown>, signature?: string): Promise<T> {
+/**
+ * POST with EIP-191 signature authentication.
+ * Signs `${timestamp}:${JSON.stringify(body)}` with the private key.
+ */
+export async function apiPost<T = unknown>(path: string, body: Record<string, unknown>, privateKey?: `0x${string}`): Promise<T> {
   const headers: Record<string, string> = {}
-  if (signature) headers['X-Signature'] = signature
+
+  if (privateKey) {
+    const account = privateKeyToAccount(privateKey)
+    const timestamp = Math.floor(Date.now() / 1000).toString()
+    const bodyStr = JSON.stringify(body)
+    const message = `${timestamp}:${bodyStr}`
+    const signature = await account.signMessage({ message })
+
+    headers['X-Address'] = account.address
+    headers['X-Signature'] = signature
+    headers['X-Timestamp'] = timestamp
+  }
+
   return apiFetch<T>(path, {
     method: 'POST',
     body: JSON.stringify(body),

@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { timingSafeEqual } from 'crypto'
 import type { AgentsDatabase } from '../../db/database.js'
 import type { EscrowIndexer } from '../../indexer/escrow-indexer.js'
 
@@ -8,13 +9,15 @@ import type { EscrowIndexer } from '../../indexer/escrow-indexer.js'
 export function dashboardRoutes(db: AgentsDatabase, indexer: EscrowIndexer): Router {
   const router = Router()
 
-  // Auth middleware
+  // Auth middleware (timing-safe comparison)
   router.use((req, res, next) => {
     const token = process.env.SX_DASHBOARD_TOKEN
     if (!token) return res.status(503).json({ error: 'Dashboard not configured' })
 
-    const auth = req.headers.authorization
-    if (auth !== `Bearer ${token}`) {
+    const auth = req.headers.authorization ?? ''
+    const expected = `Bearer ${token}`
+    if (auth.length !== expected.length ||
+        !timingSafeEqual(Buffer.from(auth), Buffer.from(expected))) {
       return res.status(401).json({ error: 'Invalid token' })
     }
     next()

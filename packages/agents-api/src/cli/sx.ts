@@ -15,7 +15,7 @@ import * as cmd from './commands.js'
 const program = new Command()
   .name('sx')
   .description('Skill Exchange CLI — interact with agents.datafund.io')
-  .version('0.1.0')
+  .version('0.2.0')
   .option('--format <type>', 'Output format: json | human')
 
 function fmt(): ReturnType<typeof detectFormat> {
@@ -35,7 +35,14 @@ async function run(fn: () => Promise<unknown> | unknown) {
       }
       process.exit(err.exitCode)
     }
-    throw err
+    // Wrap unexpected errors in structured format
+    const wrapped = new CLIError('ERR_API_ERROR', err instanceof Error ? err.message : String(err))
+    if (fmt() === 'json') {
+      console.log(JSON.stringify(wrapped.toJSON(), null, 2))
+    } else {
+      console.error(wrapped.toHuman())
+    }
+    process.exit(wrapped.exitCode)
   }
 }
 
