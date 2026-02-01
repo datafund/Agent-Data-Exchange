@@ -327,6 +327,16 @@ export async function escrowsClaim(id: string, opts: { yes?: boolean }) {
   return { txHash: hash, status: receipt.status, blockNumber: Number(receipt.blockNumber) }
 }
 
+// ── Dashboard ──
+
+export async function dashboardOverview() {
+  const token = process.env.SX_DASHBOARD_TOKEN
+  if (!token) throw new CLIError('ERR_MISSING_KEY', 'SX_DASHBOARD_TOKEN not set', 'Export SX_DASHBOARD_TOKEN=...')
+  return apiFetch('/dashboard/overview', {
+    headers: { 'Authorization': `Bearer ${token}` },
+  })
+}
+
 // ── Config ──
 
 export function configShow() {

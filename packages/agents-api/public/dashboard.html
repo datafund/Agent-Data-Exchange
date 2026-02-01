@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Skill Exchange — Team Dashboard</title>
+<style>
+  :root { --bg: #0a0a0f; --card: #12121a; --border: #1e1e2e; --text: #e0e0e6; --dim: #888; --accent: #6c5ce7; --green: #00b894; --yellow: #fdcb6e; --red: #d63031; --blue: #0984e3; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 24px; max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: var(--dim); font-size: 13px; margin-bottom: 24px; }
+  .auth-form { max-width: 400px; margin: 100px auto; text-align: center; }
+  .auth-form input { background: var(--card); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; border-radius: 6px; width: 100%; font-size: 14px; margin: 12px 0; }
+  .auth-form button { background: var(--accent); color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card .label { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  .card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+  .section { margin-bottom: 24px; }
+  .section h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--dim); text-transform: uppercase; letter-spacing: 0.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 12px; color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .bar-container { display: flex; align-items: center; gap: 8px; }
+  .bar { height: 20px; border-radius: 3px; min-width: 2px; }
+  .bar.created { background: var(--blue); }
+  .bar.funded { background: var(--yellow); }
+  .bar.completed { background: var(--green); }
+  .funnel { display: flex; gap: 4px; align-items: end; height: 120px; }
+  .funnel-step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .funnel-bar { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 4px; transition: height 0.3s; }
+  .funnel-label { font-size: 11px; color: var(--dim); }
+  .funnel-value { font-size: 16px; font-weight: 600; }
+  .event-type { font-size: 11px; padding: 2px 8px; border-radius: 10px; display: inline-block; }
+  .event-type.created { background: #0984e320; color: var(--blue); }
+  .event-type.funded { background: #fdcb6e20; color: var(--yellow); }
+  .event-type.key_committed, .event-type.key_revealed { background: #6c5ce720; color: var(--accent); }
+  .event-type.claimed { background: #00b89420; color: var(--green); }
+  .event-type.cancelled, .event-type.expired { background: #d6303120; color: var(--red); }
+  .timing { font-family: monospace; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .status-dot.ok { background: var(--green); }
+  .status-dot.warn { background: var(--yellow); }
+  .status-dot.err { background: var(--red); }
+  #error { color: var(--red); text-align: center; padding: 40px; display: none; }
+  #dashboard { display: none; }
+  .refresh { float: right; font-size: 12px; color: var(--dim); cursor: pointer; }
+  .refresh:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div id="auth" class="auth-form">
+  <h1>Skill Exchange Dashboard</h1>
+  <p style="color: var(--dim); margin-top: 8px;">Team access only</p>
+  <input type="password" id="token" placeholder="Dashboard token" autofocus>
+  <br><button onclick="login()">Enter</button>
+</div>
+
+<div id="error"></div>
+
+<div id="dashboard">
+  <h1>Skill Exchange <span class="refresh" onclick="load()">refresh</span></h1>
+  <div class="subtitle" id="generated-at"></div>
+
+  <!-- Stats cards -->
+  <div class="grid" id="stats-grid"></div>
+
+  <!-- Funnel -->
+  <div class="section">
+    <h2>Escrow Funnel</h2>
+    <div class="card">
+      <div class="funnel" id="funnel"></div>
+    </div>
+  </div>
+
+  <!-- Timings -->
+  <div class="section">
+    <h2>Average Timings (completed escrows)</h2>
+    <div class="grid" id="timings-grid"></div>
+  </div>
+
+  <!-- State distribution + top agents side by side -->
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px;">
+    <div class="section">
+      <h2>Escrow States</h2>
+      <div class="card">
+        <table id="states-table"><thead><tr><th>State</th><th>Count</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+    <div class="section">
+      <h2>Top Agents</h2>
+      <div class="card">
+        <table id="agents-table"><thead><tr><th>Agent</th><th>Score</th><th>Completed</th><th>Volume (ETH)</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- Timeline -->
+  <div class="section">
+    <h2>30-Day Timeline</h2>
+    <div class="card">
+      <table id="timeline-table"><thead><tr><th>Date</th><th>Created</th><th>Funded</th><th>Completed</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- Recent events -->
+  <div class="section">
+    <h2>Recent Events</h2>
+    <div class="card">
+      <table id="events-table"><thead><tr><th>Time</th><th>Event</th><th>Escrow</th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+
+  <!-- Indexer status -->
+  <div class="section">
+    <h2>Indexer</h2>
+    <div class="card" id="indexer-status"></div>
+  </div>
+</div>
+
+<script>
+let TOKEN = localStorage.getItem('sx-dashboard-token') || '';
+
+function login() {
+  TOKEN = document.getElementById('token').value;
+  localStorage.setItem('sx-dashboard-token', TOKEN);
+  load();
+}
+
+if (TOKEN) load();
+
+async function load() {
+  try {
+    const res = await fetch('/api/v1/dashboard/overview', {
+      headers: { 'Authorization': `Bearer ${TOKEN}` }
+    });
+    if (res.status === 401) {
+      document.getElementById('auth').style.display = 'block';
+      document.getElementById('dashboard').style.display = 'none';
+      document.getElementById('error').style.display = 'block';
+      document.getElementById('error').textContent = 'Invalid token';
+      return;
+    }
+    if (!res.ok) throw new Error(`${res.status}`);
+
+    const d = await res.json();
+    document.getElementById('auth').style.display = 'none';
+    document.getElementById('error').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    render(d);
+  } catch (e) {
+    document.getElementById('error').style.display = 'block';
+    document.getElementById('error').textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+function render(d) {
+  document.getElementById('generated-at').textContent = `Updated: ${d.generatedAt}`;
+
+  // Stats cards
+  const s = d.stats;
+  const cards = [
+    { label: 'Escrows', value: s.total_escrows },
+    { label: 'Funded', value: s.total_funded },
+    { label: 'Completed', value: s.total_completed },
+    { label: 'Disputed', value: s.total_disputed },
+    { label: 'Sellers', value: s.unique_sellers },
+    { label: 'Buyers', value: s.unique_buyers },
+    { label: 'Agents', value: s.unique_agents },
+    { label: 'Bounties', value: s.total_bounties },
+  ];
+  document.getElementById('stats-grid').innerHTML = cards.map(c =>
+    `<div class="card"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`
+  ).join('');
+
+  // Funnel
+  const f = d.funnel;
+  const max = Math.max(f.total, 1);
+  const steps = [
+    { label: 'Created', value: f.total },
+    { label: 'Funded', value: f.funded },
+    { label: 'Key Committed', value: f.committed },
+    { label: 'Key Revealed', value: f.released },
+    { label: 'Claimed', value: f.claimed },
+  ];
+  document.getElementById('funnel').innerHTML = steps.map(s => {
+    const pct = Math.max((s.value / max) * 100, 3);
+    return `<div class="funnel-step"><div class="funnel-value">${s.value}</div><div class="funnel-bar" style="height: ${pct}%"></div><div class="funnel-label">${s.label}</div></div>`;
+  }).join('');
+
+  // Timings
+  const t = d.timings;
+  const fmt = (s) => s == null ? '—' : s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s/60)}m` : `${(s/3600).toFixed(1)}h`;
+  document.getElementById('timings-grid').innerHTML = [
+    { label: 'Avg Time to Fund', value: fmt(t.avg_to_fund) },
+    { label: 'Avg Time to Release', value: fmt(t.avg_to_release) },
+    { label: 'Avg Time to Claim', value: fmt(t.avg_to_claim) },
+  ].map(c => `<div class="card"><div class="label">${c.label}</div><div class="value timing">${c.value}</div></div>`).join('');
+
+  // States
+  document.querySelector('#states-table tbody').innerHTML = d.stateDistribution.map(s =>
+    `<tr><td>${s.state}</td><td>${s.count}</td></tr>`
+  ).join('');
+
+  // Top agents
+  document.querySelector('#agents-table tbody').innerHTML = d.topAgents.map(a =>
+    `<tr><td>#${a.agent_id}</td><td>${a.reputation_score}</td><td>${a.total_completed}</td><td>${(Number(a.total_volume) / 1e18).toFixed(4)}</td></tr>`
+  ).join('');
+
+  // Timeline
+  const maxDay = Math.max(...d.timeline.map(t => t.created), 1);
+  document.querySelector('#timeline-table tbody').innerHTML = d.timeline.map(t => {
+    const w = (n) => Math.max(n / maxDay * 150, n > 0 ? 4 : 0);
+    return `<tr><td>${t.date}</td><td>${t.created}</td><td>${t.funded}</td><td>${t.completed}</td>
+      <td><div class="bar-container">
+        <div class="bar created" style="width:${w(t.created)}px"></div>
+        <div class="bar funded" style="width:${w(t.funded)}px"></div>
+        <div class="bar completed" style="width:${w(t.completed)}px"></div>
+      </div></td></tr>`;
+  }).join('');
+
+  // Recent events
+  document.querySelector('#events-table tbody').innerHTML = d.recentEvents.map(e => {
+    const ago = timeAgo(e.created_at);
+    return `<tr><td style="color:var(--dim)">${ago}</td><td><span class="event-type ${e.event_type}">${e.event_type}</span></td><td>#${e.escrow_id}</td></tr>`;
+  }).join('');
+
+  // Indexer
+  const ix = d.indexer;
+  const hasChains = ix.chains && ix.chains.length > 0;
+  const status = hasChains ? 'ok' : 'warn';
+  document.getElementById('indexer-status').innerHTML = `
+    <div><span class="status-dot ${status}"></span>${hasChains ? `${ix.chains.length} chain(s)` : 'No chains configured'}</div>
+    ${ix.chains ? ix.chains.map(c => `<div style="margin-top:8px;font-size:13px;color:var(--dim)">${c.name} (${c.chainId}): block ${c.lastBlock ?? '?'}</div>`).join('') : ''}
+  `;
+}
+
+function timeAgo(iso) {
+  const d = new Date(iso + (iso.includes('Z') ? '' : 'Z'));
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+</script>
+</body>
+</html>

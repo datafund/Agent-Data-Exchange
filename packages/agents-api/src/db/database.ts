@@ -500,6 +500,66 @@ export class AgentsDatabase {
     }
   }
 
+  // === Dashboard Queries ===
+
+  getEscrowTimeline(days: number = 30): { date: string; created: number; funded: number; completed: number }[] {
+    return this.db.prepare(`
+      SELECT date(created_at, 'unixepoch') as date,
+        COUNT(*) as created,
+        SUM(CASE WHEN funded_at IS NOT NULL THEN 1 ELSE 0 END) as funded,
+        SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) as completed
+      FROM escrows
+      WHERE created_at > unixepoch('now', '-' || ? || ' days')
+      GROUP BY date(created_at, 'unixepoch')
+      ORDER BY date
+    `).all(days) as { date: string; created: number; funded: number; completed: number }[]
+  }
+
+  getRecentEvents(limit: number = 50): { event_type: string; escrow_id: number; block_timestamp: number; created_at: string }[] {
+    return this.db.prepare(
+      'SELECT event_type, escrow_id, block_timestamp, created_at FROM escrow_events ORDER BY id DESC LIMIT ?'
+    ).all(limit) as { event_type: string; escrow_id: number; block_timestamp: number; created_at: string }[]
+  }
+
+  getEscrowStateDistribution(): { state: string; count: number }[] {
+    return this.db.prepare(
+      'SELECT state, COUNT(*) as count FROM escrows GROUP BY state ORDER BY count DESC'
+    ).all() as { state: string; count: number }[]
+  }
+
+  getTopAgents(limit: number = 10): { agent_id: number; reputation_score: number; total_completed: number; total_volume: string }[] {
+    return this.db.prepare(
+      'SELECT agent_id, reputation_score, total_completed, total_volume FROM agent_reputation ORDER BY reputation_score DESC LIMIT ?'
+    ).all(limit) as { agent_id: number; reputation_score: number; total_completed: number; total_volume: string }[]
+  }
+
+  getConversionFunnel(): { total: number; funded: number; committed: number; released: number; claimed: number } {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as total,
+        SUM(CASE WHEN funded_at IS NOT NULL THEN 1 ELSE 0 END) as funded,
+        SUM(CASE WHEN committed_at IS NOT NULL THEN 1 ELSE 0 END) as committed,
+        SUM(CASE WHEN released_at IS NOT NULL THEN 1 ELSE 0 END) as released,
+        SUM(CASE WHEN claimed_at IS NOT NULL THEN 1 ELSE 0 END) as claimed
+      FROM escrows
+    `).get() as Record<string, number>
+    return {
+      total: row.total ?? 0,
+      funded: row.funded ?? 0,
+      committed: row.committed ?? 0,
+      released: row.released ?? 0,
+      claimed: row.claimed ?? 0,
+    }
+  }
+
+  getAvgTimings(): { avg_to_fund: number | null; avg_to_release: number | null; avg_to_claim: number | null } {
+    return this.db.prepare(`
+      SELECT AVG(time_to_fund) as avg_to_fund,
+        AVG(time_to_release) as avg_to_release,
+        AVG(time_to_claim) as avg_to_claim
+      FROM escrows WHERE completed = 1
+    `).get() as { avg_to_fund: number | null; avg_to_release: number | null; avg_to_claim: number | null }
+  }
+
   close() {
     this.db.close()
   }

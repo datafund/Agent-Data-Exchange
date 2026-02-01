@@ -131,6 +131,10 @@ program.command('stats').action(() => run(() => cmd.statsFn()))
 // ── Schema ──
 program.command('schema').action(() => run(() => SCHEMA))
 
+// ── Dashboard ──
+program.command('dashboard').description('Team dashboard overview (requires SX_DASHBOARD_TOKEN)')
+  .action(() => run(() => cmd.dashboardOverview()))
+
 // ── Config ──
 const config = program.command('config')
 config.command('show').action(() => run(() => cmd.configShow()))
