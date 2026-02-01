@@ -4,14 +4,19 @@
   "type": "module",
   "private": true,
   "main": "./src/index.ts",
+  "bin": {
+    "sx": "./dist/cli/sx.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "tsx src/index.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "build:cli": "tsc -p tsconfig.cli.json"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
+    "commander": "^12.1.0",
     "cors": "^2.8.5",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
