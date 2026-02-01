@@ -13,13 +13,27 @@ export function statsRoutes(db: AgentsDatabase, indexer: EscrowIndexer): Router 
     res.json(stats)
   })
 
-  // GET /health
+  // GET /health — structured health check for external monitoring
   router.get('/health', (_req, res) => {
     const indexerStatus = indexer.getStatus()
-    res.json({
-      status: 'ok',
-      uptime: Math.floor((Date.now() - startedAt) / 1000),
-      indexer: indexerStatus,
+    const uptimeSeconds = Math.floor((Date.now() - startedAt) / 1000)
+
+    // Detect indexer lag: if last poll was more than 3x the poll interval ago, it's stale
+    const lagThreshold = indexerStatus.pollIntervalMs * 3
+    const lastPollAge = indexerStatus.lastPollAt ? Date.now() - indexerStatus.lastPollAt : null
+    const indexerHealthy = indexerStatus.running && (lastPollAge === null || lastPollAge < lagThreshold)
+
+    const healthy = indexerStatus.chains.length > 0 && indexerHealthy
+
+    res.status(healthy ? 200 : 503).json({
+      status: healthy ? 'ok' : 'degraded',
+      uptime: uptimeSeconds,
+      indexer: {
+        running: indexerStatus.running,
+        lastPollSecondsAgo: lastPollAge !== null ? Math.floor(lastPollAge / 1000) : null,
+        healthy: indexerHealthy,
+        chains: indexerStatus.chains,
+      },
     })
   })
 

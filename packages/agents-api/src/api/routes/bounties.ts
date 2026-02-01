@@ -1,18 +1,23 @@
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import type { AgentsDatabase } from '../../db/database.js'
+import { verifySignature } from '../middleware/verify-signature.js'
 
 export function bountyRoutes(db: AgentsDatabase): Router {
   const router = Router()
 
-  // POST /bounties — create a new bounty
-  router.post('/', (req, res) => {
-    const { poster, posterAgentId, title, description, category, rewardAmount, rewardToken, tags, moltbookPostId, expiresIn } = req.body
+  // POST /bounties — create a new bounty (requires signature)
+  router.post('/', verifySignature, (req, res) => {
+    const verifiedAddress = (req as any).verifiedAddress as string
+    const { posterAgentId, title, description, category, rewardAmount, rewardToken, tags, moltbookPostId, expiresIn } = req.body
 
-    if (!poster || !title) {
-      res.status(400).json({ error: 'poster and title are required' })
+    if (!title) {
+      res.status(400).json({ error: 'title is required' })
       return
     }
+
+    // Poster is always the verified signer — cannot be spoofed
+    const poster = verifiedAddress
 
     const id = randomUUID()
     const now = Math.floor(Date.now() / 1000)
@@ -38,7 +43,7 @@ export function bountyRoutes(db: AgentsDatabase): Router {
       return
     }
 
-    res.status(201).json({ id, poster: poster.toLowerCase(), title, status: 'open', createdAt: now, expiresAt })
+    res.status(201).json({ id, poster, title, status: 'open', createdAt: now, expiresAt })
   })
 
   // GET /bounties — list bounties
@@ -76,8 +81,8 @@ export function bountyRoutes(db: AgentsDatabase): Router {
     res.json({ ...bounty, tags: JSON.parse(bounty.tags) })
   })
 
-  // POST /bounties/:id/fulfill — link bounty to escrow
-  router.post('/:id/fulfill', (req, res) => {
+  // POST /bounties/:id/fulfill — link bounty to escrow (requires signature)
+  router.post('/:id/fulfill', verifySignature, (req, res) => {
     const bounty = db.getBounty(req.params.id)
     if (!bounty) {
       res.status(404).json({ error: 'Bounty not found' })
@@ -98,11 +103,16 @@ export function bountyRoutes(db: AgentsDatabase): Router {
     res.json({ id: req.params.id, status: 'fulfilled', escrowId })
   })
 
-  // POST /bounties/:id/cancel — cancel a bounty
-  router.post('/:id/cancel', (req, res) => {
+  // POST /bounties/:id/cancel — cancel a bounty (requires signature, must be poster)
+  router.post('/:id/cancel', verifySignature, (req, res) => {
+    const verifiedAddress = (req as any).verifiedAddress as string
     const bounty = db.getBounty(req.params.id)
     if (!bounty) {
       res.status(404).json({ error: 'Bounty not found' })
+      return
+    }
+    if (bounty.poster !== verifiedAddress) {
+      res.status(403).json({ error: 'Only the bounty poster can cancel' })
       return
     }
     if (bounty.status !== 'open') {

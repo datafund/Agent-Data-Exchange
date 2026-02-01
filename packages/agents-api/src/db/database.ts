@@ -18,6 +18,9 @@ export class AgentsDatabase {
     this.db = new Database(dbPath)
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
+    this.db.pragma('busy_timeout = 5000')      // Wait up to 5s for write lock instead of failing immediately
+    this.db.pragma('wal_autocheckpoint = 1000') // Checkpoint after 1000 pages (~4MB) to prevent WAL bloat
+    this.db.pragma('synchronous = NORMAL')      // Safe with WAL, avoids fsync on every commit
     this.init()
   }
 

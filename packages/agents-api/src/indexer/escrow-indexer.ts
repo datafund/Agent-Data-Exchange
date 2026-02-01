@@ -33,6 +33,7 @@ export class EscrowIndexer {
   private catchupBatchSize: number
   private chains: ChainConfig[]
   private running = false
+  private lastPollAt: number | null = null
 
   constructor(
     db: AgentsDatabase,
@@ -110,6 +111,7 @@ export class EscrowIndexer {
   }
 
   private async pollChain(chain: ChainConfig) {
+    this.lastPollAt = Date.now()
     try {
       const client = this.clients.get(chain.chainId)!
       const currentBlock = await client.getBlockNumber()
@@ -352,13 +354,21 @@ export class EscrowIndexer {
     return map[eventName] ?? null
   }
 
-  getStatus(): { chains: Array<{ chainId: number; name: string; lastBlock: string }> } {
+  getStatus(): {
+    running: boolean
+    chains: Array<{ chainId: number; name: string; lastBlock: string }>
+    lastPollAt: number | null
+    pollIntervalMs: number
+  } {
     return {
+      running: this.running,
       chains: this.chains.map(c => ({
         chainId: c.chainId,
         name: c.name,
         lastBlock: this.db.getLastBlock(c.chainId).toString(),
       })),
+      lastPollAt: this.lastPollAt,
+      pollIntervalMs: this.pollIntervalMs,
     }
   }
 }

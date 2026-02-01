@@ -48,10 +48,6 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   v1.use('/bounties', bountyRoutes(db))
   v1.use('/stats', statsRoutes(db, indexer))
   v1.use('/dashboard', dashboardRoutes(db, indexer))
-  v1.get('/health', (_req, res) => {
-    const status = indexer.getStatus()
-    res.json({ status: 'ok', indexer: status })
-  })
 
   app.use('/api/v1', v1)
 
