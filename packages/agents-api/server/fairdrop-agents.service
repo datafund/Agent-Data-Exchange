@@ -1,0 +1,51 @@
+# Fairdrop Agents API - Production
+#
+# Installation:
+#   sudo cp fairdrop-agents.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable fairdrop-agents
+#   sudo systemctl start fairdrop-agents
+#
+# Logs:
+#   journalctl -u fairdrop-agents -f
+
+[Unit]
+Description=Fairdrop Agents API (Reputation Indexer)
+Documentation=https://github.com/fairDataSociety/fairdrop
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/var/www/apps/fairdrop-agents
+
+# Environment
+Environment=NODE_ENV=production
+Environment=PORT=3003
+Environment=DB_PATH=/var/www/apps/fairdrop-agents/data/agents.db
+
+# Chain configuration (set via EnvironmentFile or override)
+EnvironmentFile=-/var/www/apps/fairdrop-agents/.env
+
+# Start command
+ExecStart=/usr/bin/npx tsx src/index.ts
+
+# Restart policy
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+LimitNOFILE=65535
+MemoryMax=512M
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/apps/fairdrop-agents/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,58 @@
+# Agents API - Production
+# Append to /etc/caddy/Caddyfile or include via import
+#
+# agents.datafund.io → localhost:3003
+
+agents.datafund.io {
+	reverse_proxy localhost:3003 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+
+		# Health check
+		health_uri /api/v1/health
+		health_interval 30s
+		health_timeout 5s
+
+		# Timeouts
+		transport http {
+			dial_timeout 5s
+			response_header_timeout 30s
+		}
+	}
+
+	# Security headers
+	header {
+		# CORS - allow fairdrop origins
+		Access-Control-Allow-Origin "https://fairdrop.xyz"
+		Access-Control-Allow-Methods "GET, OPTIONS"
+		Access-Control-Allow-Headers "Content-Type, Accept"
+		Access-Control-Max-Age "86400"
+
+		# Core security
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Cross-Origin-Opener-Policy "same-origin"
+		Cross-Origin-Resource-Policy "same-origin"
+		-Server
+	}
+
+	# Handle CORS preflight
+	@options {
+		method OPTIONS
+	}
+	respond @options 204
+
+	# Logging
+	log {
+		output file /var/log/caddy/agents-access.log {
+			roll_size 50mb
+			roll_keep 5
+		}
+		format json
+		level INFO
+	}
+}

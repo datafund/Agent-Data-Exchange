@@ -1,0 +1,51 @@
+# Fairdrop Agents API - Staging
+#
+# Installation:
+#   sudo cp fairdrop-agents-staging.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable fairdrop-agents-staging
+#   sudo systemctl start fairdrop-agents-staging
+#
+# Logs:
+#   journalctl -u fairdrop-agents-staging -f
+
+[Unit]
+Description=Fairdrop Agents API - Staging (Reputation Indexer)
+Documentation=https://github.com/fairDataSociety/fairdrop
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+Group=deploy
+WorkingDirectory=/var/www/apps/fairdrop-agents-staging
+
+# Environment
+Environment=NODE_ENV=staging
+Environment=PORT=3004
+Environment=DB_PATH=/var/www/apps/fairdrop-agents-staging/data/agents.db
+
+# Chain configuration
+EnvironmentFile=-/var/www/apps/fairdrop-agents-staging/.env
+
+# Start command
+ExecStart=/usr/bin/npx tsx src/index.ts
+
+# Restart policy
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+LimitNOFILE=65535
+MemoryMax=512M
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/apps/fairdrop-agents-staging/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
