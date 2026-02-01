@@ -25,7 +25,7 @@ export class Wallet {
   async generate(password: string): Promise<string> {
     const wallet = ethers.Wallet.createRandom();
     const keystore = await wallet.encrypt(password);
-    fs.writeFileSync(this.keystorePath, keystore);
+    fs.writeFileSync(this.keystorePath, keystore, { mode: 0o600 });
     this.wallet = wallet;
     return wallet.address;
   }

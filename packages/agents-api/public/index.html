@@ -374,13 +374,20 @@ footer{
 <script>
 const API = '/api/v1'
 
-function shortAddr(a) {
-  if (!a || a.length < 10) return a || '-'
-  return a.slice(0, 6) + '...' + a.slice(-4)
+function esc(s) {
+  if (s == null) return ''
+  const d = document.createElement('div')
+  d.textContent = String(s)
+  return d.innerHTML
 }
 
-function tierClass(tier) { return 'tier tier-' + (tier || 'new') }
-function statusClass(s) { return 'status status-' + (s || 'created') }
+function shortAddr(a) {
+  if (!a || a.length < 10) return esc(a) || '-'
+  return esc(a.slice(0, 6) + '...' + a.slice(-4))
+}
+
+function tierClass(tier) { return 'tier tier-' + (tier || 'new').replace(/[^a-z]/g, '') }
+function statusClass(s) { return 'status status-' + (s || 'created').replace(/[^a-z]/g, '') }
 
 function weiToEth(wei) {
   const n = Number(wei || 0)
@@ -449,13 +456,13 @@ async function fetchAll() {
   const ab = document.getElementById('agents-body')
   if (agents?.agents?.length > 0) {
     ab.innerHTML = agents.agents.map(a => `<tr>
-      <td class="mono">#${a.agentId}</td>
-      <td class="score">${a.score}</td>
-      <td><span class="${tierClass(a.tier)}">${a.tier}</span></td>
-      <td>${a.totalCompleted}</td>
-      <td>${a.totalDisputed}</td>
-      <td class="hide-mobile">${(a.completionRate * 100).toFixed(1)}%</td>
-      <td class="hide-mobile">${weiToEth(a.totalVolume)}</td>
+      <td class="mono">#${esc(a.agentId)}</td>
+      <td class="score">${esc(a.score)}</td>
+      <td><span class="${tierClass(a.tier)}">${esc(a.tier)}</span></td>
+      <td>${esc(a.totalCompleted)}</td>
+      <td>${esc(a.totalDisputed)}</td>
+      <td class="hide-mobile">${esc((a.completionRate * 100).toFixed(1))}%</td>
+      <td class="hide-mobile">${esc(weiToEth(a.totalVolume))}</td>
     </tr>`).join('')
   } else {
     ab.innerHTML = emptyRow(7, 'No agents indexed yet')
@@ -465,12 +472,12 @@ async function fetchAll() {
   const sb = document.getElementById('sellers-body')
   if (sellers?.wallets?.length > 0) {
     sb.innerHTML = sellers.wallets.map(w => `<tr>
-      <td class="mono addr" title="${w.address}">${shortAddr(w.address)}</td>
-      <td class="score">${w.score}</td>
-      <td><span class="${tierClass(w.tier)}">${w.tier}</span></td>
-      <td>${w.totalCompleted}</td>
-      <td>${w.totalDisputed}</td>
-      <td class="hide-mobile">${weiToEth(w.totalVolume)}</td>
+      <td class="mono addr" title="${esc(w.address)}">${shortAddr(w.address)}</td>
+      <td class="score">${esc(w.score)}</td>
+      <td><span class="${tierClass(w.tier)}">${esc(w.tier)}</span></td>
+      <td>${esc(w.totalCompleted)}</td>
+      <td>${esc(w.totalDisputed)}</td>
+      <td class="hide-mobile">${esc(weiToEth(w.totalVolume))}</td>
     </tr>`).join('')
   } else {
     sb.innerHTML = emptyRow(6, 'No sellers indexed yet')
@@ -480,12 +487,12 @@ async function fetchAll() {
   const bb = document.getElementById('buyers-body')
   if (buyers?.wallets?.length > 0) {
     bb.innerHTML = buyers.wallets.map(w => `<tr>
-      <td class="mono addr" title="${w.address}">${shortAddr(w.address)}</td>
-      <td class="score">${w.score}</td>
-      <td><span class="${tierClass(w.tier)}">${w.tier}</span></td>
-      <td>${w.totalCompleted}</td>
-      <td>${w.totalDisputed}</td>
-      <td class="hide-mobile">${weiToEth(w.totalVolume)}</td>
+      <td class="mono addr" title="${esc(w.address)}">${shortAddr(w.address)}</td>
+      <td class="score">${esc(w.score)}</td>
+      <td><span class="${tierClass(w.tier)}">${esc(w.tier)}</span></td>
+      <td>${esc(w.totalCompleted)}</td>
+      <td>${esc(w.totalDisputed)}</td>
+      <td class="hide-mobile">${esc(weiToEth(w.totalVolume))}</td>
     </tr>`).join('')
   } else {
     bb.innerHTML = emptyRow(6, 'No buyers indexed yet')
@@ -495,12 +502,12 @@ async function fetchAll() {
   const bnb = document.getElementById('bounties-body')
   if (bounties?.bounties?.length > 0) {
     bnb.innerHTML = bounties.bounties.map(b => `<tr>
-      <td>${b.title}</td>
-      <td>${b.category || '-'}</td>
-      <td class="mono">${b.reward_amount} ${b.reward_token}</td>
-      <td class="mono addr" title="${b.poster}">${shortAddr(b.poster)}</td>
-      <td class="hide-mobile">${futureTime(b.expires_at)}</td>
-      <td><span class="${statusClass(b.status)}">${b.status}</span></td>
+      <td>${esc(b.title)}</td>
+      <td>${esc(b.category) || '-'}</td>
+      <td class="mono">${esc(b.reward_amount)} ${esc(b.reward_token)}</td>
+      <td class="mono addr" title="${esc(b.poster)}">${shortAddr(b.poster)}</td>
+      <td class="hide-mobile">${esc(futureTime(b.expires_at))}</td>
+      <td><span class="${statusClass(b.status)}">${esc(b.status)}</span></td>
     </tr>`).join('')
   } else {
     bnb.innerHTML = emptyRow(6, 'No open bounties')
@@ -510,12 +517,12 @@ async function fetchAll() {
   const eb = document.getElementById('escrows-body')
   if (escrows?.escrows?.length > 0) {
     eb.innerHTML = escrows.escrows.map(e => `<tr>
-      <td class="mono">#${e.id}</td>
-      <td class="mono addr" title="${e.seller}">${shortAddr(e.seller)}</td>
-      <td class="mono addr" title="${e.buyer}">${shortAddr(e.buyer)}</td>
-      <td class="mono">${weiToEth(e.amount)}</td>
-      <td><span class="${statusClass(e.state)}">${e.state}</span></td>
-      <td class="hide-mobile">${relTime(e.created_at)}</td>
+      <td class="mono">#${esc(e.id)}</td>
+      <td class="mono addr" title="${esc(e.seller)}">${shortAddr(e.seller)}</td>
+      <td class="mono addr" title="${esc(e.buyer)}">${shortAddr(e.buyer)}</td>
+      <td class="mono">${esc(weiToEth(e.amount))}</td>
+      <td><span class="${statusClass(e.state)}">${esc(e.state)}</span></td>
+      <td class="hide-mobile">${esc(relTime(e.created_at))}</td>
     </tr>`).join('')
   } else {
     eb.innerHTML = emptyRow(6, 'No escrows indexed yet')

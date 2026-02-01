@@ -20,18 +20,17 @@ export const TOKENS = {
 } as const;
 
 // Deployed contract addresses
-// TODO: Update after deployment
 export const ADDRESSES = {
   base: {
     rpcUrl: 'https://mainnet.base.org',
     chainId: 8453,
-    escrowAddress: '',  // Deploy pending
+    escrowAddress: '0xDd4396d4F28d2b513175ae17dE11e56a898d19c3',
     tokens: TOKENS,
   },
   baseSepolia: {
     rpcUrl: 'https://sepolia.base.org',
     chainId: 84532,
-    escrowAddress: '',  // Deploy pending
+    escrowAddress: '0xa226C0E0cEa2D8353C9Ec6ee959A03D54F8D14b6',
     tokens: {
       NATIVE: TOKENS.NATIVE,
       USDC: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',  // Base Sepolia USDC
