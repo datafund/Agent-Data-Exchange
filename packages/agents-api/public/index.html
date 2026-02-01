@@ -92,6 +92,9 @@ thead th{
 tbody td{padding:12px 16px;border-bottom:1px solid var(--card-border)}
 tbody tr:last-child td{border-bottom:none}
 tbody tr:hover{background:rgba(255,255,255,0.02)}
+tbody tr.clickable{cursor:pointer}
+tbody tr.clickable:hover{background:rgba(247,109,94,0.06)}
+tbody tr.detail-row:hover{background:transparent}
 .mono{font-family:'SF Mono','Fira Code',monospace;font-size:13px}
 .addr{color:var(--text-dim)}
 .score{font-weight:700}
@@ -174,7 +177,7 @@ footer{
   </div>
   <div class="nav-links">
     <a href="#agents">Agents</a>
-    <a href="#sellers">Sellers</a>
+    <a href="#wallets">Wallets</a>
     <a href="#bounties">Bounties</a>
     <a href="#escrows">Escrows</a>
     <a href="https://github.com/datafund/Agent-Data-Exchange">GitHub</a>
@@ -262,7 +265,7 @@ footer{
 
 <!-- Sellers & Buyers -->
 <div class="container">
-<section id="sellers">
+<section id="wallets">
   <div class="section-header">
     <div>
       <div class="tabs">
@@ -501,13 +504,20 @@ async function fetchAll() {
   // Bounties table
   const bnb = document.getElementById('bounties-body')
   if (bounties?.bounties?.length > 0) {
-    bnb.innerHTML = bounties.bounties.map(b => `<tr>
+    bnb.innerHTML = bounties.bounties.map(b => `<tr class="clickable" data-bounty-id="${esc(b.id)}">
       <td>${esc(b.title)}</td>
       <td>${esc(b.category) || '-'}</td>
       <td class="mono">${esc(b.reward_amount)} ${esc(b.reward_token)}</td>
       <td class="mono addr" title="${esc(b.poster)}">${shortAddr(b.poster)}</td>
       <td class="hide-mobile">${esc(futureTime(b.expires_at))}</td>
       <td><span class="${statusClass(b.status)}">${esc(b.status)}</span></td>
+    </tr>
+    <tr class="detail-row" id="detail-${esc(b.id)}" style="display:none">
+      <td colspan="6" style="padding:16px 20px;background:rgba(255,255,255,0.02);border-left:3px solid var(--coral)">
+        <div style="font-size:13px;color:var(--text-dim);margin-bottom:8px"><strong>Description:</strong> ${esc(b.description) || 'No description'}</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-bottom:4px"><strong>Poster:</strong> <span class="mono">${esc(b.poster)}</span></div>
+        ${b.tags && b.tags.length ? `<div style="font-size:13px;color:var(--text-dim)"><strong>Tags:</strong> ${b.tags.map(t => esc(t)).join(', ')}</div>` : ''}
+      </td>
     </tr>`).join('')
   } else {
     bnb.innerHTML = emptyRow(6, 'No open bounties')
@@ -528,6 +538,15 @@ async function fetchAll() {
     eb.innerHTML = emptyRow(6, 'No escrows indexed yet')
   }
 }
+
+// Bounty row click — event delegation (survives innerHTML replacement)
+document.getElementById('bounties-body').addEventListener('click', function(e) {
+  const row = e.target.closest('tr.clickable')
+  if (!row) return
+  const id = row.dataset.bountyId
+  const detail = document.getElementById('detail-' + id)
+  if (detail) detail.style.display = detail.style.display === 'none' ? '' : 'none'
+})
 
 fetchAll()
 setInterval(fetchAll, 30000)
