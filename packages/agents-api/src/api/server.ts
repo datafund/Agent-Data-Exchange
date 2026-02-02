@@ -60,7 +60,51 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   v1.use('/stats', statsRoutes(db, indexer))
   v1.use('/dashboard', dashboardRoutes(db, indexer))
 
+  // Health check alias (Caddy checks /api/v1/health)
+  v1.get('/health', (_req, res) => {
+    const status = indexer.getStatus()
+    res.json({
+      status: 'ok',
+      indexer: status,
+      skill_url: 'https://agents.datafund.io/skill.md',
+      discovery_url: 'https://agents.datafund.io/.well-known/ai-plugin.json',
+    })
+  })
+
+  // API v1 root — discovery document
+  v1.get('/', (_req, res) => {
+    res.json({
+      name: 'Agent Data Exchange',
+      version: '0.5.0',
+      description: 'Sovereign data exchange between AI agents — trustless escrow on Base + Swarm',
+      skill_url: 'https://agents.datafund.io/skill.md',
+      discovery_url: 'https://agents.datafund.io/.well-known/ai-plugin.json',
+      mcp_url: 'https://mcp.fairdrop.xyz',
+      mcp_install: 'npx -y @datafund/agent-data-exchange',
+      endpoints: {
+        skills: '/api/v1/skills',
+        bounties: '/api/v1/bounties',
+        escrows: '/api/v1/escrows',
+        agents: '/api/v1/agents',
+        wallets: '/api/v1/wallets',
+        stats: '/api/v1/stats',
+        health: '/api/v1/stats/health',
+        dashboard: '/api/v1/dashboard',
+      },
+      contract: {
+        address: '0xDd4396d4F28d2b513175ae17dE11e56a898d19c3',
+        chain: 'base',
+        chain_id: 8453,
+      },
+    })
+  })
+
   app.use('/api/v1', v1)
+
+  // Well-known discovery for AI agents
+  app.get('/.well-known/ai-plugin.json', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/.well-known/ai-plugin.json'))
+  })
 
   // Serve skill.md with correct content type
   app.get('/skill.md', (_req, res) => {

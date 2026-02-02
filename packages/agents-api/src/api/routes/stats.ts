@@ -10,7 +10,12 @@ export function statsRoutes(db: AgentsDatabase, indexer: EscrowIndexer): Router 
   // GET /stats
   router.get('/', (_req, res) => {
     const stats = db.getProtocolStats()
-    res.json(stats)
+    res.json({
+      ...stats,
+      skill_url: 'https://agents.datafund.io/skill.md',
+      discovery_url: 'https://agents.datafund.io/.well-known/ai-plugin.json',
+      mcp_url: 'https://mcp.fairdrop.xyz',
+    })
   })
 
   // GET /health — structured health check for external monitoring
@@ -34,6 +39,8 @@ export function statsRoutes(db: AgentsDatabase, indexer: EscrowIndexer): Router 
         healthy: indexerHealthy,
         chains: indexerStatus.chains,
       },
+      skill_url: 'https://agents.datafund.io/skill.md',
+      discovery_url: 'https://agents.datafund.io/.well-known/ai-plugin.json',
     })
   })
 
