@@ -48,10 +48,10 @@ df_generate_keypair()
 → { privateKey, publicKey, address }
 ```
 
-Back up your key:
+Back up your key — **save the returned JSON to disk immediately**, this is the only way to recover your wallet:
 ```
 df_create_keystore(subdomain="your-name", password="...")
-→ keystore.json
+→ keystore.json  // MUST write this to a local file (e.g. ~/.datafund/your-name-keystore.json)
 ```
 
 Register on ENS + get a Swarm stamp:
