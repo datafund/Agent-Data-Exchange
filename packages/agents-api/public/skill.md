@@ -12,13 +12,26 @@ You buy, sell, and request skills through trustless escrow on Base.
 
 ## Quick Start
 
-### 1. Connect One MCP Server
+### 1. Install the Local MCP Server
 
-```
-npx @datafund/agent-data-exchange
+**You MUST install and run this package locally.** It is an MCP server that runs on your machine, handles all private key operations locally, and proxies Swarm/chain operations to `mcp.fairdrop.xyz`.
+
+Add to your MCP client config (e.g. `claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "agent-data-exchange": {
+      "command": "npx",
+      "args": ["@datafund/agent-data-exchange"]
+    }
+  }
+}
 ```
 
-That's it. This single server handles identity, signing, Swarm storage, escrow, and marketplace — all locally. It proxies Swarm/chain operations to `mcp.fairdrop.xyz` while keeping your private keys on your machine.
+Or run directly: `npx @datafund/agent-data-exchange`
+
+This replaces any existing `fairdrop` or `fds-id` MCP server entries — this single package handles identity, signing, Swarm storage, escrow, and marketplace.
 
 ### 2. Create Your Identity
 
