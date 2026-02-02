@@ -117,4 +117,51 @@ describe('Database + Reputation integration', () => {
     const count = db.countEscrows({ seller: '0xseller' })
     expect(count).toBe(bySeller.length)
   })
+
+  it('prevents negative timing metrics from being stored', () => {
+    // Create an escrow with a created_at timestamp
+    db.upsertEscrow({
+      id: 100, chainId: 8453,
+      seller: '0xtest', amount: '1000',
+      state: 'created', createdAt: 2000000000, // Future timestamp
+      sellerAgentId: 1,
+    })
+
+    // Try to fund it with an earlier timestamp (would cause negative time_to_fund)
+    db.upsertEscrow({
+      id: 100, chainId: 8453,
+      buyer: '0xbuyer', buyerAgentId: 2,
+      state: 'funded', fundedAt: 1999999000, // Before created_at
+    })
+
+    const escrow = db.getEscrow(100)!
+    // time_to_fund should NOT be set (or should be null) because it would be negative
+    expect(escrow.time_to_fund).toBeNull()
+  })
+
+  it('cleanupInvalidTimingMetrics fixes bad data', () => {
+    // Manually insert an escrow with bad timing via raw SQL
+    // (simulating legacy data that bypassed validation)
+    const stmt = (db as any).db.prepare(`
+      INSERT INTO escrows (id, chain_id, seller, state, created_at, funded_at, time_to_fund, time_to_release)
+      VALUES (200, 8453, '0xbaddata', 'funded', 1000, 2000, -500, -1000)
+    `)
+    stmt.run()
+
+    // Verify the bad data exists
+    let escrow = db.getEscrow(200)!
+    expect(escrow.time_to_fund).toBe(-500)
+    expect(escrow.time_to_release).toBe(-1000)
+
+    // Run cleanup
+    const fixed = db.cleanupInvalidTimingMetrics()
+    expect(fixed).toBeGreaterThan(0)
+
+    // Verify timing metrics are now valid
+    escrow = db.getEscrow(200)!
+    // time_to_fund should be recalculated to 1000 (funded_at - created_at)
+    expect(escrow.time_to_fund).toBe(1000)
+    // time_to_release should be null (no released_at timestamp)
+    expect(escrow.time_to_release).toBeNull()
+  })
 })

@@ -198,18 +198,27 @@ export class AgentsDatabase {
       }
     }
 
-    // Compute timing metrics
+    // Compute timing metrics (only if timestamps are logically ordered and result is non-negative)
     if (escrow.fundedAt && existing?.created_at) {
-      updates.push('time_to_fund = ?')
-      values.push(escrow.fundedAt - existing.created_at)
+      const timeToFund = escrow.fundedAt - existing.created_at
+      if (timeToFund >= 0) {
+        updates.push('time_to_fund = ?')
+        values.push(timeToFund)
+      }
     }
     if (escrow.releasedAt && existing?.funded_at) {
-      updates.push('time_to_release = ?')
-      values.push(escrow.releasedAt - existing.funded_at)
+      const timeToRelease = escrow.releasedAt - existing.funded_at
+      if (timeToRelease >= 0) {
+        updates.push('time_to_release = ?')
+        values.push(timeToRelease)
+      }
     }
     if (escrow.claimedAt && existing?.released_at) {
-      updates.push('time_to_claim = ?')
-      values.push(escrow.claimedAt - existing.released_at)
+      const timeToClaim = escrow.claimedAt - existing.released_at
+      if (timeToClaim >= 0) {
+        updates.push('time_to_claim = ?')
+        values.push(timeToClaim)
+      }
     }
 
     if (updates.length > 0) {
@@ -632,6 +641,61 @@ export class AgentsDatabase {
         AVG(time_to_claim) as avg_to_claim
       FROM escrows WHERE completed = 1
     `).get() as { avg_to_fund: number | null; avg_to_release: number | null; avg_to_claim: number | null }
+  }
+
+  /**
+   * Clean up invalid timing metrics in existing escrows.
+   * Recalculates time_to_fund, time_to_release, time_to_claim based on actual timestamps.
+   * Sets metrics to NULL if timestamps are missing or would result in negative values.
+   * @returns Number of escrows fixed
+   */
+  cleanupInvalidTimingMetrics(): number {
+    // Fix time_to_fund: should be funded_at - created_at, must be >= 0
+    const fixFund = this.db.prepare(`
+      UPDATE escrows SET time_to_fund = CASE
+        WHEN funded_at IS NOT NULL AND created_at IS NOT NULL AND funded_at >= created_at
+        THEN funded_at - created_at
+        ELSE NULL
+      END
+      WHERE time_to_fund IS NOT NULL AND (
+        time_to_fund < 0 OR
+        funded_at IS NULL OR
+        created_at IS NULL OR
+        time_to_fund != (funded_at - created_at)
+      )
+    `).run()
+
+    // Fix time_to_release: should be released_at - funded_at, must be >= 0
+    const fixRelease = this.db.prepare(`
+      UPDATE escrows SET time_to_release = CASE
+        WHEN released_at IS NOT NULL AND funded_at IS NOT NULL AND released_at >= funded_at
+        THEN released_at - funded_at
+        ELSE NULL
+      END
+      WHERE time_to_release IS NOT NULL AND (
+        time_to_release < 0 OR
+        released_at IS NULL OR
+        funded_at IS NULL OR
+        time_to_release != (released_at - funded_at)
+      )
+    `).run()
+
+    // Fix time_to_claim: should be claimed_at - released_at, must be >= 0
+    const fixClaim = this.db.prepare(`
+      UPDATE escrows SET time_to_claim = CASE
+        WHEN claimed_at IS NOT NULL AND released_at IS NOT NULL AND claimed_at >= released_at
+        THEN claimed_at - released_at
+        ELSE NULL
+      END
+      WHERE time_to_claim IS NOT NULL AND (
+        time_to_claim < 0 OR
+        claimed_at IS NULL OR
+        released_at IS NULL OR
+        time_to_claim != (claimed_at - released_at)
+      )
+    `).run()
+
+    return fixFund.changes + fixRelease.changes + fixClaim.changes
   }
 
   close() {
