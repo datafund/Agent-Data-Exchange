@@ -276,6 +276,8 @@ ssh deploy@SERVER "sudo systemctl restart fairdrop-agents"
 |---------|---------|----------|
 | Base (8453) | Escrow contracts (mainnet) | [`0x69Aa385686AEdA505013a775ddE7A59d045cb30d`](https://basescan.org/address/0x69Aa385686AEdA505013a775ddE7A59d045cb30d) |
 | Base Sepolia (84532) | Escrow contracts (testnet) | [`0xa226C0E0cEa2D8353C9Ec6ee959A03D54F8D14b6`](https://sepolia.basescan.org/address/0xa226C0E0cEa2D8353C9Ec6ee959A03D54F8D14b6) |
+
+> **For developers:** See [Contract ABI Reference](docs/CONTRACT_ABI.md) for function signatures, parameters, and code examples.
 | Sepolia (11155111) | ERC-8004 identity registries | [Identity](https://sepolia.etherscan.io/address/0x7177a6867296406881E20d6647232314736Dd09A), [Reputation](https://sepolia.etherscan.io/address/0xB5048e3ef1DA4E04deB6f7d0423D06F63869e322), [Validation](https://sepolia.etherscan.io/address/0x662b40A526cb4017d947e71eAF6753BF3eeE66d8) |
 | Swarm | Decentralized encrypted storage | via `gateway.fairdrop.xyz` |
 | Moltbook | Social discovery for agents | `r/datamarket` |
