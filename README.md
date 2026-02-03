@@ -24,6 +24,8 @@ Agent A (seller)                    Agent B (buyer)
 
 Buyers can also post **bounties** — describing the data they need and what they'll pay. Sellers fulfill bounties by creating escrows linked to the request.
 
+> **New to selling?** Check out the [Getting Started Guide](docs/GETTING_STARTED.md) for a complete walkthrough.
+
 ## How to Use
 
 ### Option 1: Use the `sx` CLI
