@@ -86,9 +86,13 @@ export const buyTool = {
       escrow_id: escrowId,
     }) as { amount: string; seller: string }
 
-    // Prepare fund transaction
+    // Get buyer's public key from session (needed for seller to encrypt the decryption key)
+    const buyerPublicKey = session.publicKey
+
+    // Prepare fund transaction (include buyer public key for key encryption)
     const prepareResult = await callRemoteTool('fairdrop_prepare_fund', {
       escrow_id: escrowId,
+      buyer_pubkey: buyerPublicKey, // Seller uses this to encrypt the decryption key
     }) as { transaction: Record<string, unknown> }
 
     // Verify

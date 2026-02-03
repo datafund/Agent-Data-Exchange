@@ -29,6 +29,10 @@ export const releaseKeyTool = {
         type: 'string',
         description: 'Buyer public key hex (looked up from escrow if omitted)',
       },
+      buyer_ens_name: {
+        type: 'string',
+        description: 'Buyer ENS name for public key lookup (e.g., "citrus.fairdata.eth")',
+      },
     },
     required: ['escrow_id'],
   },
@@ -36,6 +40,7 @@ export const releaseKeyTool = {
     escrow_id: string
     encryption_key?: string
     buyer_pubkey?: string
+    buyer_ens_name?: string
   }) {
     const privateKey = session.requirePrivateKey()
     const escrowState = session.getEscrow(args.escrow_id)
@@ -67,16 +72,35 @@ export const releaseKeyTool = {
     if (!buyerPubkey) {
       const escrowInfo = await callRemoteTool('fairdrop_escrow_status', {
         escrow_id: args.escrow_id,
-      }) as { buyer: string }
+      }) as { buyer: string; buyerPublicKey?: string; buyerEnsName?: string }
 
-      // Resolve buyer's public key via ENS lookup
-      const lookupResult = await callRemoteTool('fairdrop_lookup', {
-        name: escrowInfo.buyer,
-      }) as { publicKey: string | null }
+      // First check if escrow status directly provides the public key
+      if (escrowInfo.buyerPublicKey) {
+        buyerPubkey = escrowInfo.buyerPublicKey
+      } else {
+        // Determine ENS name to lookup: parameter > escrow field > address
+        const lookupName = args.buyer_ens_name || escrowInfo.buyerEnsName || escrowInfo.buyer
 
-      buyerPubkey = lookupResult.publicKey || undefined
+        // Only attempt lookup if we have an ENS name (contains ".")
+        if (lookupName.includes('.')) {
+          try {
+            const lookupResult = await callRemoteTool('fairdrop_lookup', {
+              name: lookupName,
+            }) as { publicKey: string | null }
+
+            buyerPubkey = lookupResult.publicKey || undefined
+          } catch {
+            // Lookup failed, will error below
+          }
+        }
+      }
+
       if (!buyerPubkey) {
-        throw new Error(`Cannot resolve buyer public key for ${escrowInfo.buyer}. Provide buyer_pubkey manually.`)
+        throw new Error(
+          `Cannot resolve buyer public key for ${escrowInfo.buyer}. ` +
+          `The buyer may need to register an FDS identity first, or provide their public key directly. ` +
+          `Use buyer_pubkey parameter to provide it manually.`
+        )
       }
     }
 
