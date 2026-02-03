@@ -15,7 +15,6 @@ describe('API routes', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'agents-api-test-'))
     db = new AgentsDatabase(join(tmpDir, 'test.db'))
 
-    // Create a mock indexer
     const indexer = {
       getStatus: () => ({ chains: [] }),
       start: async () => {},
@@ -24,7 +23,6 @@ describe('API routes', () => {
 
     server = createServer(db, indexer)
 
-    // Insert test data
     db.upsertEscrow({
       id: 1,
       chainId: 8453,
@@ -46,14 +44,18 @@ describe('API routes', () => {
     rmSync(tmpDir, { recursive: true })
   })
 
-  // Use supertest-like approach with raw http
-  async function request(path: string): Promise<{ status: number; body: any }> {
+  async function request(path: string, options?: { method?: string; body?: any }): Promise<{ status: number; body: any }> {
     return new Promise((resolve) => {
       const { createServer: httpServer } = require('http')
       const s = httpServer(server)
       s.listen(0, () => {
         const port = s.address().port
-        fetch(`http://localhost:${port}${path}`)
+        const fetchOptions: RequestInit = {
+          method: options?.method || 'GET',
+          headers: options?.body ? { 'Content-Type': 'application/json' } : undefined,
+          body: options?.body ? JSON.stringify(options.body) : undefined,
+        }
+        fetch(\`http://localhost:\${port}\${path}\`, fetchOptions)
           .then(async (res) => {
             const body = await res.json()
             s.close()
@@ -102,5 +104,73 @@ describe('API routes', () => {
     const res = await request('/api/v1/stats')
     expect(res.status).toBe(200)
     expect(res.body.total_escrows).toBeDefined()
+  })
+
+  // POST /escrows tests
+  it('POST /api/v1/escrows without action returns usage info', async () => {
+    const res = await request('/api/v1/escrows', { method: 'POST', body: {} })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toContain('Invalid action')
+    expect(res.body.usage).toBeDefined()
+    expect(res.body.usage.create).toBeDefined()
+    expect(res.body.usage.fund).toBeDefined()
+  })
+
+  it('POST /api/v1/escrows with action=fund returns transaction data', async () => {
+    db.upsertEscrow({
+      id: 99,
+      chainId: 8453,
+      seller: '0x3333333333333333333333333333333333333333',
+      amount: '500000000000000000',
+      paymentToken: '0x0000000000000000000000000000000000000000',
+      state: 'created',
+      createdAt: 1700000000,
+    })
+
+    const res = await request('/api/v1/escrows', {
+      method: 'POST',
+      body: { action: 'fund', escrowId: '99' }
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.action).toBe('fund')
+    expect(res.body.transaction).toBeDefined()
+    expect(res.body.transaction.to).toBe('0xDd4396d4F28d2b513175ae17dE11e56a898d19c3')
+    expect(res.body.transaction.data).toMatch(/^0x/)
+    expect(res.body.transaction.chainId).toBe(8453)
+  })
+
+  it('POST /api/v1/escrows with action=fund for non-existent escrow returns 404', async () => {
+    const res = await request('/api/v1/escrows', {
+      method: 'POST',
+      body: { action: 'fund', escrowId: '99999' }
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('POST /api/v1/escrows with action=create returns transaction data', async () => {
+    const res = await request('/api/v1/escrows', {
+      method: 'POST',
+      body: {
+        action: 'create',
+        contentHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+        keyCommitment: '0xfedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321',
+        amount: '1000000000000000000',
+      }
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.action).toBe('create')
+    expect(res.body.transaction).toBeDefined()
+    expect(res.body.transaction.to).toBe('0xDd4396d4F28d2b513175ae17dE11e56a898d19c3')
+    expect(res.body.transaction.data).toMatch(/^0x/)
+    expect(res.body.params.contentHash).toBe('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef')
+  })
+
+  it('POST /api/v1/escrows with action=create validates required fields', async () => {
+    const res = await request('/api/v1/escrows', {
+      method: 'POST',
+      body: { action: 'create' }
+    })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toContain('contentHash is required')
   })
 })
