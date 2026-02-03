@@ -1,4 +1,6 @@
 import { signMessage } from 'viem/accounts'
+import { createPublicClient, http } from 'viem'
+import { mainnet } from 'viem/chains'
 import { session } from '../session.js'
 
 export const registerAccountTool = {
@@ -58,6 +60,46 @@ This tool registers your local identity on-chain and allocates storage.`,
       error?: string
     }
 
+    // Validate ENS registration actually succeeded
+    if (ensData.success === false || ensData.error) {
+      throw new Error(`ENS registration failed: ${ensData.error || 'Unknown error (success=false)'}`)
+    }
+
+    // Only set subdomain if registration confirmed
+    if (!ensData.txHash) {
+      throw new Error('ENS registration response missing txHash - registration may not have completed')
+    }
+
+    // Verify ENS actually resolves (wait for tx confirmation + check resolver)
+    const ensName = `${args.subdomain}.fairdata.eth`
+    const publicClient = createPublicClient({
+      chain: mainnet,
+      transport: http(process.env.ETH_RPC_URL || 'https://eth.llamarpc.com'),
+    })
+
+    // Wait a bit for tx to be indexed, then verify
+    let ensVerified = false
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise(r => setTimeout(r, 5000)) // 5s between attempts
+      try {
+        const resolved = await publicClient.getEnsAddress({ name: ensName })
+        if (resolved) {
+          ensVerified = true
+          break
+        }
+      } catch {
+        // Not yet resolvable
+      }
+    }
+
+    if (!ensVerified) {
+      throw new Error(
+        `ENS registration tx submitted (${ensData.txHash}) but name "${ensName}" does not resolve. ` +
+        `The FDS identity server may have a bug - address record not set in resolver. ` +
+        `Check tx on etherscan: https://etherscan.io/tx/${ensData.txHash}`
+      )
+    }
+
     session.setSubdomain(args.subdomain)
 
     // Step 2: Get trial stamp via SIWE auth
@@ -111,18 +153,23 @@ Issued At: ${issuedAt}`
     const stampSuccess = !!stampData?.stampId
 
     return {
-      success: stampSuccess,
+      success: true, // ENS registration succeeded (would have thrown otherwise)
       subdomain: args.subdomain,
       ensName: `${args.subdomain}.fairdata.eth`,
       walletAddress: address,
       publicKey,
-      ens: ensData,
+      ens: {
+        registered: true,
+        txHash: ensData.txHash,
+      },
       stamp: stampSuccess ? {
+        allocated: true,
         batchId: stampData!.stampId,
         capacity: '4GB for 1 week',
         daysRemaining: stampData!.daysRemaining,
         isNew: stampData!.isNew,
       } : {
+        allocated: false,
         error: stampData?.error || 'Failed to allocate stamp',
         note: 'ENS registration succeeded. Retry stamp with SIWE auth or fund your own.',
       },
