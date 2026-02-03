@@ -1,8 +1,7 @@
-import { Wallet, FDSKeystoreManager, HDWallet, encryptBackup, decryptBackup } from '@fairdatasociety/fds-id'
+import { Wallet, FDSKeystoreManager, HDWallet } from '@fairdatasociety/fds-id'
 import type { FDSAccount, FDSKeystore } from '@fairdatasociety/fds-id'
 import { bytesToHex } from '@noble/hashes/utils'
 import { session } from '../session.js'
-import { callRemoteTool } from '../proxy.js'
 
 export const generateKeypairTool = {
   name: 'df_generate_keypair',
@@ -211,56 +210,43 @@ Requires: ENS subdomain already registered, stamp assigned.`,
       throw new Error('No public key in session. Use df_generate_keypair first.')
     }
 
-    // Step 1: Upload keystore to Swarm
-    const keystoreJson = JSON.stringify(args.keystore)
-    const keystoreBase64 = Buffer.from(keystoreJson).toString('base64')
-
-    const uploadResult = await callRemoteTool('fairdrop_upload', {
-      content_base64: keystoreBase64,
-      encrypt: false, // Keystore is already encrypted
-    }) as { reference?: string; error?: string }
-
-    if (!uploadResult.reference) {
-      throw new Error(`Swarm upload failed: ${uploadResult.error || 'No reference returned'}`)
-    }
-
-    const swarmHash = uploadResult.reference
-
-    // Step 2: Encrypt the Swarm hash (using fds-id standard encryption)
-    const encryptedHash = encryptBackup(swarmHash, args.password, subdomain)
-
-    // Step 3: Set backup hash in ENS via API
+    // Use fds-id API's combined backup endpoint
     const apiUrl = process.env.FDS_ID_API_URL || 'https://id.fairdatasociety.org'
-    const response = await fetch(`${apiUrl}/api/ens/backup-hash`, {
+    const response = await fetch(`${apiUrl}/api/backup/full`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        username: subdomain,
-        swarmHash: encryptedHash,
+        keystore: args.keystore,
+        password: args.password,
+        subdomain,
         publicKey: publicKey.startsWith('0x') ? publicKey : `0x${publicKey}`,
       }),
     })
 
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({})) as { error?: string }
-      // Return partial success - Swarm upload worked
+    const result = await response.json() as {
+      success?: boolean
+      swarmReference?: string
+      encryptedHash?: string
+      ensTxHash?: string
+      ensName?: string
+      error?: string
+    }
+
+    if (!response.ok || !result.success) {
       return {
         success: false,
-        swarmHash,
-        encryptedHash,
-        error: `Swarm upload succeeded but ENS update failed: ${err.error || response.statusText}`,
-        manual_recovery: `Save this swarmHash: ${swarmHash}. You can manually set the backup later.`,
+        swarmReference: result.swarmReference,
+        encryptedHash: result.encryptedHash,
+        error: result.error || 'Backup failed',
       }
     }
 
-    const ensResult = await response.json() as { txHash?: string }
-
     return {
       success: true,
-      swarmHash,
-      encryptedHash,
-      ensTxHash: ensResult.txHash,
-      ensName: `${subdomain}.fairdata.eth`,
+      swarmReference: result.swarmReference,
+      encryptedHash: result.encryptedHash,
+      ensTxHash: result.ensTxHash,
+      ensName: result.ensName,
       note: 'Keystore backed up to Swarm and ENS updated. Use df_restore_from_ens to recover.',
     }
   },
@@ -288,51 +274,28 @@ Looks up encrypted Swarm reference in ENS, decrypts it, downloads keystore from 
   async execute(args: { subdomain: string; password: string }) {
     const apiUrl = process.env.FDS_ID_API_URL || 'https://id.fairdatasociety.org'
 
-    // Step 1: Look up backup hash from ENS
-    const lookupResponse = await fetch(`${apiUrl}/api/ens/lookup/${args.subdomain}`)
-    if (!lookupResponse.ok) {
-      throw new Error(`ENS lookup failed: ${lookupResponse.statusText}`)
+    // Use fds-id API's combined restore endpoint
+    const response = await fetch(`${apiUrl}/api/backup/restore/${args.subdomain}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: args.password }),
+    })
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({})) as { error?: string }
+      throw new Error(err.error || `Restore failed: ${response.statusText}`)
     }
 
-    const lookupData = await lookupResponse.json() as {
-      exists: boolean
-      backupHash?: string | null
-      publicKey?: string | null
+    const result = await response.json() as {
+      success: boolean
+      keystore: FDSKeystore
+      swarmReference: string
     }
 
-    if (!lookupData.exists) {
-      throw new Error(`Subdomain ${args.subdomain}.fairdata.eth not found`)
-    }
+    // Decrypt keystore to get account
+    const account = await FDSKeystoreManager.decrypt(result.keystore, args.password)
 
-    if (!lookupData.backupHash) {
-      throw new Error(`No backup found for ${args.subdomain}.fairdata.eth`)
-    }
-
-    // Step 2: Decrypt the Swarm reference (using fds-id standard encryption)
-    let swarmHash: string
-    try {
-      swarmHash = decryptBackup(lookupData.backupHash, args.password, args.subdomain)
-    } catch {
-      throw new Error('Failed to decrypt backup reference. Check your password.')
-    }
-
-    // Step 3: Download keystore from Swarm
-    const downloadResult = await callRemoteTool('fairdrop_download', {
-      reference: swarmHash,
-      output_path: '/dev/null', // We just want the content
-    }) as { content_base64?: string; error?: string }
-
-    if (!downloadResult.content_base64) {
-      throw new Error(`Swarm download failed: ${downloadResult.error || 'No content returned'}`)
-    }
-
-    const keystoreJson = Buffer.from(downloadResult.content_base64, 'base64').toString('utf-8')
-    const keystore = JSON.parse(keystoreJson) as FDSKeystore
-
-    // Step 4: Decrypt keystore
-    const account = await FDSKeystoreManager.decrypt(keystore, args.password)
-
-    // Step 5: Restore to session
+    // Restore to session
     session.setIdentity(account.privateKey, account.publicKey, account.walletAddress)
     if (account.subdomain) session.setSubdomain(account.subdomain)
 

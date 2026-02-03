@@ -15,7 +15,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@fairdatasociety/fds-id": "^0.1.0",
+    "@fairdatasociety/fds-id": "^0.1.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "viem": "^2.45.1"
   },
