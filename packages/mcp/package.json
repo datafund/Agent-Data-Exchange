@@ -1,0 +1,45 @@
+{
+  "name": "@datafund/agent-data-exchange",
+  "version": "0.2.8",
+  "description": "Unified MCP server for the Datafund Skill Exchange — identity, signing, escrow, marketplace",
+  "main": "dist/index.js",
+  "bin": {
+    "agent-data-exchange": "./bin/agent-data-exchange.js"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fairdatasociety/fds-id": "^0.1.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "viem": "^2.45.1"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "keywords": [
+    "mcp",
+    "datafund",
+    "fairdatasociety",
+    "swarm",
+    "escrow",
+    "agent",
+    "skill-exchange"
+  ],
+  "license": "MIT"
+}
