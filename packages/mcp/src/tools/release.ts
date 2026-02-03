@@ -78,8 +78,9 @@ export const releaseKeyTool = {
       commitBlock?: number
     }
 
-    // State machine check - KeyCommitted = 2
-    const isKeyCommitted = escrowInfo.state === 'KeyCommitted' || escrowInfo.state === '2'
+    // State machine check - KeyCommitted = 2 (handle different API formats)
+    const stateUpper = escrowInfo.state?.toUpperCase?.() || ''
+    const isKeyCommitted = stateUpper === 'KEYCOMMITTED' || stateUpper === 'KEY_COMMITTED' || escrowInfo.state === '2'
 
     // Get buyer pubkey from escrow if not provided
     let buyerPubkey = args.buyer_pubkey
