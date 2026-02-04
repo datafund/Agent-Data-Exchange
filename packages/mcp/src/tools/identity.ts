@@ -1,6 +1,6 @@
 import { Wallet, FDSKeystoreManager, HDWallet } from '@fairdatasociety/fds-id'
 import type { FDSAccount, FDSKeystore } from '@fairdatasociety/fds-id'
-import { bytesToHex } from '@noble/hashes/utils'
+import { bytesToHex } from '@noble/hashes/utils.js'
 import { session } from '../session.js'
 
 export const generateKeypairTool = {

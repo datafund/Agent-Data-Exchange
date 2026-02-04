@@ -6,4 +6,5 @@ export default defineConfig({
   dts: false,
   clean: true,
   sourcemap: true,
+  noExternal: ['@noble/secp256k1', '@noble/hashes'],
 })
