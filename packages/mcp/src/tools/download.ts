@@ -79,7 +79,7 @@ export const downloadContentTool = {
       const eventsData = (await eventsRes.json()) as {
         events: Array<{
           event_type: string
-          event_data: string
+          data: Record<string, unknown>
         }>
       }
 
@@ -87,11 +87,8 @@ export const downloadContentTool = {
         (e) => e.event_type === 'key_revealed',
       )
       if (keyEvent) {
-        const eventData =
-          typeof keyEvent.event_data === 'string'
-            ? JSON.parse(keyEvent.event_data)
-            : keyEvent.event_data
-        encryptedKeyForBuyerHex = eventData.encryptedKeyForBuyer || eventData.serializedEncryptedKey
+        const eventData = keyEvent.data
+        encryptedKeyForBuyerHex = (eventData.encryptedKeyForBuyer || eventData.serializedEncryptedKey) as string
         break
       }
 

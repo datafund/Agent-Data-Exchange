@@ -83,6 +83,26 @@ export const buyTool = {
       throw new Error('Provide escrow_id or skill_id')
     }
 
+    // If we have escrow_id but no encryptedDataRef, try to look it up from the marketplace
+    if (!encryptedDataRef) {
+      try {
+        const MARKETPLACE_URL = process.env.MARKETPLACE_URL || 'https://agents.datafund.io'
+        const escrowRes = await fetch(`${MARKETPLACE_URL}/api/v1/escrows/${escrowId}`)
+        if (escrowRes.ok) {
+          const escrowData = await escrowRes.json() as { skill_id?: string }
+          if (escrowData.skill_id) {
+            const skillRes = await fetch(`${MARKETPLACE_URL}/api/v1/skills/${escrowData.skill_id}/purchase-info`)
+            if (skillRes.ok) {
+              const skillData = await skillRes.json() as { encrypted_data_ref?: string }
+              encryptedDataRef = skillData.encrypted_data_ref || undefined
+            }
+          }
+        }
+      } catch {
+        // Non-fatal — buyer can provide it manually to df_download_content
+      }
+    }
+
     // Get escrow details to know the price
     const escrowInfo = await callRemoteTool('fairdrop_escrow_status', {
       escrow_id: escrowId,
