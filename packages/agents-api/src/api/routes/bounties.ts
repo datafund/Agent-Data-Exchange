@@ -1,54 +1,31 @@
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import type { AgentsDatabase } from '../../db/database.js'
-import { verifySignature } from '../middleware/verify-signature.js'
+import { sanitize, isValidAddress } from '../sanitize.js'
 
 export function bountyRoutes(db: AgentsDatabase): Router {
   const router = Router()
 
-  // POST /bounties — create a new bounty (requires signature)
-  router.post('/', verifySignature, (req, res) => {
-    const verifiedAddress = (req as any).verifiedAddress as string
-    const { posterAgentId, title, description, category, rewardAmount, rewardToken, tags, moltbookPostId, expiresIn } = req.body
+  // POST /bounties — create a new bounty
+  router.post('/', (req, res) => {
+    const { poster, posterAgentId, title, description, category, rewardAmount, rewardToken, tags, moltbookPostId, expiresIn } = req.body
 
-    if (!title || typeof title !== 'string') {
-      res.status(400).json({ error: 'title is required' })
+    if (!isValidAddress(poster) || !title) {
+      res.status(400).json({ error: 'valid poster address and title are required' })
       return
     }
-    if (title.length > 500) {
-      res.status(400).json({ error: 'title must be 500 characters or less' })
-      return
-    }
-    if (description && typeof description === 'string' && description.length > 5000) {
-      res.status(400).json({ error: 'description must be 5000 characters or less' })
-      return
-    }
-    if (tags && Array.isArray(tags) && tags.length > 20) {
-      res.status(400).json({ error: 'Maximum 20 tags allowed' })
-      return
-    }
-
-    // Validate expiresIn: 1 hour to 90 days
-    const parsedExpiresIn = expiresIn != null ? Number(expiresIn) : 7 * 86400
-    if (isNaN(parsedExpiresIn) || parsedExpiresIn < 3600 || parsedExpiresIn > 90 * 86400) {
-      res.status(400).json({ error: 'expiresIn must be between 3600 (1 hour) and 7776000 (90 days) seconds' })
-      return
-    }
-
-    // Poster is always the verified signer — cannot be spoofed
-    const poster = verifiedAddress
 
     const id = randomUUID()
     const now = Math.floor(Date.now() / 1000)
-    const expiresAt = now + parsedExpiresIn
+    const expiresAt = now + (expiresIn ?? 7 * 86400) // default 7 days
 
     const created = db.createBounty({
       id,
       poster,
       posterAgentId,
-      title,
-      description,
-      category,
+      title: sanitize(title),
+      description: sanitize(description),
+      category: sanitize(category),
       rewardAmount,
       rewardToken,
       tags,
@@ -62,29 +39,47 @@ export function bountyRoutes(db: AgentsDatabase): Router {
       return
     }
 
-    res.status(201).json({ id, poster, title, status: 'open', createdAt: now, expiresAt })
+    res.status(201).json({ id, poster: poster.toLowerCase(), title, status: 'open', createdAt: now, expiresAt })
   })
 
-  // GET /bounties — list bounties
+  // GET /bounties — list bounties with filtering
   router.get('/', (req, res) => {
-    const { poster, category, status, limit, offset } = req.query
+    const { poster, category, status, tags, min_reward, max_reward, sort, limit, offset } = req.query
 
     // Expire old bounties on each query
     db.expireOldBounties()
 
-    const bounties = db.listBounties({
-      poster: poster as string,
-      category: category as string,
-      status: (status as string) ?? 'open',
-      limit: Math.min(limit ? Number(limit) : 50, 100),
-      offset: Math.max(offset ? Number(offset) : 0, 0),
-    })
+    // Use advanced search if any filter params are provided
+    const hasAdvancedFilters = tags || min_reward || max_reward || sort
+
+    let bounties
+    if (hasAdvancedFilters) {
+      bounties = db.searchBounties({
+        category: category as string,
+        tags: tags ? (tags as string).split(',').map(t => t.trim()) : undefined,
+        minReward: min_reward as string,
+        maxReward: max_reward as string,
+        sort: sort as 'newest' | 'reward' | 'expiring',
+        limit: limit ? Number(limit) : 50,
+        offset: offset ? Number(offset) : 0,
+      })
+    } else {
+      bounties = db.listBounties({
+        poster: poster as string,
+        category: category as string,
+        status: (status as string) ?? 'open',
+        limit: limit ? Number(limit) : 50,
+        offset: offset ? Number(offset) : 0,
+      })
+    }
     const total = db.countBounties({ poster: poster as string, status: (status as string) ?? 'open' })
 
+    // Get fulfillment counts for each bounty
     res.json({
       bounties: bounties.map(b => ({
         ...b,
         tags: JSON.parse(b.tags),
+        poster_reputation: undefined, // TODO: Add poster reputation lookup
       })),
       total,
     })
@@ -100,9 +95,8 @@ export function bountyRoutes(db: AgentsDatabase): Router {
     res.json({ ...bounty, tags: JSON.parse(bounty.tags) })
   })
 
-  // POST /bounties/:id/fulfill — link bounty to escrow (requires signature)
-  router.post('/:id/fulfill', verifySignature, (req, res) => {
-    const verifiedAddress = (req as any).verifiedAddress as string
+  // POST /bounties/:id/fulfill — link bounty to escrow
+  router.post('/:id/fulfill', (req, res) => {
     const bounty = db.getBounty(req.params.id)
     if (!bounty) {
       res.status(404).json({ error: 'Bounty not found' })
@@ -119,35 +113,15 @@ export function bountyRoutes(db: AgentsDatabase): Router {
       return
     }
 
-    // Verify the escrow exists and the fulfiller is the seller
-    const escrow = db.getEscrow(Number(escrowId))
-    if (!escrow) {
-      res.status(400).json({ error: 'Escrow not found' })
-      return
-    }
-    if (escrow.seller.toLowerCase() !== verifiedAddress) {
-      res.status(403).json({ error: 'Only the escrow seller can fulfill a bounty' })
-      return
-    }
-    if (!escrow.completed) {
-      res.status(400).json({ error: 'Escrow must be completed before fulfilling a bounty' })
-      return
-    }
-
     db.fulfillBounty(req.params.id, escrowId)
     res.json({ id: req.params.id, status: 'fulfilled', escrowId })
   })
 
-  // POST /bounties/:id/cancel — cancel a bounty (requires signature, must be poster)
-  router.post('/:id/cancel', verifySignature, (req, res) => {
-    const verifiedAddress = (req as any).verifiedAddress as string
+  // POST /bounties/:id/cancel — cancel a bounty
+  router.post('/:id/cancel', (req, res) => {
     const bounty = db.getBounty(req.params.id)
     if (!bounty) {
       res.status(404).json({ error: 'Bounty not found' })
-      return
-    }
-    if (bounty.poster !== verifiedAddress) {
-      res.status(403).json({ error: 'Only the bounty poster can cancel' })
       return
     }
     if (bounty.status !== 'open') {

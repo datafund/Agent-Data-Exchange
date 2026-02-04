@@ -37,28 +37,21 @@ if (config.chains.length > 0) {
 }
 
 // Start HTTP server
-const server = app.listen(config.port, () => {
+app.listen(config.port, () => {
   console.log(`[agents-api] API listening on http://localhost:${config.port}`)
 })
 
 // Graceful shutdown
-function shutdown() {
+process.on('SIGINT', () => {
   console.log('[agents-api] Shutting down...')
   indexer.stop()
-  server.close(() => {
-    db.close()
-    process.exit(0)
-  })
-  // Force exit after 10s if server.close hangs
-  setTimeout(() => {
-    console.error('[agents-api] Forced shutdown after timeout')
-    db.close()
-    process.exit(1)
-  }, 10_000).unref()
-}
+  db.close()
+  process.exit(0)
+})
 
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
-process.on('unhandledRejection', (err) => {
-  console.error('[agents-api] Unhandled rejection:', err)
+process.on('SIGTERM', () => {
+  console.log('[agents-api] Shutting down...')
+  indexer.stop()
+  db.close()
+  process.exit(0)
 })

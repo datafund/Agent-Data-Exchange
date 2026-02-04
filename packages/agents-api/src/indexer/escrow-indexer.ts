@@ -33,7 +33,6 @@ export class EscrowIndexer {
   private catchupBatchSize: number
   private chains: ChainConfig[]
   private running = false
-  private lastPollAt: number | null = null
 
   constructor(
     db: AgentsDatabase,
@@ -105,57 +104,23 @@ export class EscrowIndexer {
         : from + BigInt(this.catchupBatchSize) - 1n
 
       await this.fetchAndProcessEvents(chain, from, to)
-      // Store block hash for the batch end block (for reorg detection)
-      const batchBlock = await client.getBlock({ blockNumber: to }).catch(() => null)
-      this.db.setLastBlock(chain.chainId, to, batchBlock?.hash ?? '')
+      this.db.setLastBlock(chain.chainId, to)
       from = to + 1n
     }
   }
 
   private async pollChain(chain: ChainConfig) {
-    this.lastPollAt = Date.now()
     try {
       const client = this.clients.get(chain.chainId)!
       const currentBlock = await client.getBlockNumber()
       const safeBlock = currentBlock - BigInt(chain.confirmations)
-      let lastBlock = this.db.getLastBlock(chain.chainId)
-
-      // Reorg detection: verify stored block hash matches chain
-      if (lastBlock > 0n) {
-        const storedHash = this.db.getLastBlockHash(chain.chainId)
-        if (storedHash) {
-          const block = await client.getBlock({ blockNumber: lastBlock }).catch(() => null)
-          if (block && block.hash !== storedHash) {
-            console.warn(`[indexer] ${chain.name}: reorg detected at block ${lastBlock} (stored=${storedHash.slice(0, 10)}, chain=${block.hash?.slice(0, 10)})`)
-            // Roll back and reprocess from the reorged block
-            const affected = this.db.rollbackFromBlock(chain.chainId, Number(lastBlock))
-            if (affected.length > 0) {
-              console.warn(`[indexer] ${chain.name}: rolled back ${affected.length} escrows: ${affected.join(', ')}`)
-              // Recalculate reputation for affected escrows
-              for (const escrowId of affected) {
-                const escrow = this.db.getEscrow(escrowId)
-                if (escrow) {
-                  this.calculator.recalculateWallet(escrow.seller)
-                  if (escrow.buyer) this.calculator.recalculateWallet(escrow.buyer)
-                  if (escrow.seller_agent_id > 0) this.calculator.recalculateAgent(escrow.seller_agent_id)
-                  if (escrow.buyer_agent_id > 0) this.calculator.recalculateAgent(escrow.buyer_agent_id)
-                }
-              }
-            }
-            lastBlock = lastBlock - 1n
-            this.db.setLastBlock(chain.chainId, lastBlock, '')
-          }
-        }
-      }
-
+      const lastBlock = this.db.getLastBlock(chain.chainId)
       const fromBlock = lastBlock > 0n ? lastBlock + 1n : chain.startBlock
+
       if (fromBlock > safeBlock) return
 
       await this.fetchAndProcessEvents(chain, fromBlock, safeBlock)
-
-      // Store block hash of the safe block for reorg detection
-      const safeBlockData = await client.getBlock({ blockNumber: safeBlock }).catch(() => null)
-      this.db.setLastBlock(chain.chainId, safeBlock, safeBlockData?.hash ?? '')
+      this.db.setLastBlock(chain.chainId, safeBlock)
     } catch (err) {
       console.error(`[indexer] ${chain.name}: poll error:`, err)
     }
@@ -273,6 +238,22 @@ export class EscrowIndexer {
         })
         wallets.push(seller)
         agents.push(sellerAgentId)
+
+        // Auto-link skill to escrow by matching seller + contentHash
+        // Supports multi-copy: multiple escrows can link to the same skill
+        try {
+          const contentHash = String(args.contentHash ?? '')
+          if (contentHash) {
+            const skill = this.db.findSkillByContentHash(seller, contentHash)
+            if (skill) {
+              // Link escrow → skill (and skill.escrow_id if not already set)
+              this.db.linkSkillToEscrow(skill.id, escrowId)
+              console.log(`[indexer] Auto-linked skill ${skill.id} to escrow ${escrowId}`)
+            }
+          }
+        } catch (err) {
+          console.warn(`[indexer] Failed to auto-link escrow ${escrowId}:`, err)
+        }
         break
       }
       case 'EscrowFunded': {
@@ -310,7 +291,12 @@ export class EscrowIndexer {
         break
       }
       case 'KeyRevealed': {
-        this.db.upsertEscrow({ id: escrowId, chainId, state: 'released', releasedAt: blockTimestamp })
+        this.db.upsertEscrow({ id: escrowId, chainId, state: 'released', releasedAt: blockTimestamp, completed: 1 })
+        const revealed = this.db.getEscrow(escrowId)
+        if (revealed) {
+          wallets.push(revealed.seller, revealed.buyer)
+          agents.push(revealed.seller_agent_id, revealed.buyer_agent_id)
+        }
         break
       }
       case 'PaymentClaimed': {
@@ -319,6 +305,10 @@ export class EscrowIndexer {
         if (claimed) {
           wallets.push(claimed.seller, claimed.buyer)
           agents.push(claimed.seller_agent_id, claimed.buyer_agent_id)
+          // Increment skill sales counter if linked
+          if (claimed.skill_id) {
+            this.db.incrementSkillSales(claimed.skill_id)
+          }
         }
         break
       }
@@ -387,21 +377,13 @@ export class EscrowIndexer {
     return map[eventName] ?? null
   }
 
-  getStatus(): {
-    running: boolean
-    chains: Array<{ chainId: number; name: string; lastBlock: string }>
-    lastPollAt: number | null
-    pollIntervalMs: number
-  } {
+  getStatus(): { chains: Array<{ chainId: number; name: string; lastBlock: string }> } {
     return {
-      running: this.running,
       chains: this.chains.map(c => ({
         chainId: c.chainId,
         name: c.name,
         lastBlock: this.db.getLastBlock(c.chainId).toString(),
       })),
-      lastPollAt: this.lastPollAt,
-      pollIntervalMs: this.pollIntervalMs,
     }
   }
 }

@@ -27,5 +27,26 @@ export function escrowRoutes(db: AgentsDatabase): Router {
     res.json({ escrows, total, limit, offset })
   })
 
+  // GET /escrows/:escrowId/events?since=<timestamp> — poll for state changes
+  router.get('/:escrowId/events', (req, res) => {
+    const escrowId = parseInt(req.params.escrowId, 10)
+    if (isNaN(escrowId)) return res.status(400).json({ error: 'Invalid escrow ID' })
+
+    const since = parseInt(req.query.since as string) || 0
+    const events = db.getEscrowEvents(escrowId, since)
+
+    res.json({
+      escrow_id: escrowId,
+      since,
+      events: events.map(e => ({
+        event_type: e.event_type,
+        block_number: e.block_number,
+        block_timestamp: e.block_timestamp,
+        tx_hash: e.tx_hash,
+        data: JSON.parse(e.event_data),
+      })),
+    })
+  })
+
   return router
 }

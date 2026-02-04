@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import type { AgentsDatabase } from '../../db/database.js'
 import { scoreTier, scoreRecommendation } from '../../reputation/calculator.js'
+import { sanitize, isValidAddress, verifyWalletSignature } from '../sanitize.js'
 
 export function agentRoutes(db: AgentsDatabase): Router {
   const router = Router()
@@ -85,6 +86,51 @@ export function agentRoutes(db: AgentsDatabase): Router {
     const total = db.countEscrowsByAgent(agentId)
 
     res.json({ escrows, total, limit, offset })
+  })
+
+  // POST /agents/:agentId/vote — vote on an agent
+  router.post('/:agentId/vote', async (req, res) => {
+    const { voter, voterAgentId, value, signature } = req.body
+    if (!isValidAddress(voter) || (value !== 1 && value !== -1)) {
+      res.status(400).json({ error: 'valid voter address and value (+1 or -1) required' })
+      return
+    }
+    if (!await verifyWalletSignature(voter, signature, `vote:${req.params.agentId}:${value}`)) {
+      res.status(401).json({ error: 'Invalid signature' })
+      return
+    }
+    db.upsertVote({ voter, voterAgentId, targetType: 'agent', targetId: req.params.agentId, value })
+    const votes = db.getVoteSummary('agent', req.params.agentId)
+    res.json(votes)
+  })
+
+  // GET /agents/:agentId/votes — get vote summary
+  router.get('/:agentId/votes', (req, res) => {
+    const votes = db.getVoteSummary('agent', req.params.agentId)
+    res.json(votes)
+  })
+
+  // GET /agents/:agentId/comments — list comments
+  router.get('/:agentId/comments', (req, res) => {
+    const { limit, offset } = req.query
+    const comments = db.listComments('agent', req.params.agentId, limit ? Number(limit) : 50, offset ? Number(offset) : 0)
+    const total = db.countComments('agent', req.params.agentId)
+    res.json({ comments, total })
+  })
+
+  // POST /agents/:agentId/comments — add comment
+  router.post('/:agentId/comments', async (req, res) => {
+    const { author, authorAgentId, body, signature } = req.body
+    if (!isValidAddress(author) || !body) {
+      res.status(400).json({ error: 'valid author address and body required' })
+      return
+    }
+    if (!await verifyWalletSignature(author, signature, `comment:${req.params.agentId}:${body}`)) {
+      res.status(401).json({ error: 'Invalid signature' })
+      return
+    }
+    const result = db.addComment({ author, authorAgentId, targetType: 'agent', targetId: req.params.agentId, body: sanitize(body) })
+    res.status(201).json(result)
   })
 
   return router

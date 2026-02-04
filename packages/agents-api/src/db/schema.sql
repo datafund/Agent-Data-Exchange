@@ -53,6 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_escrows_buyer ON escrows(buyer);
 CREATE INDEX IF NOT EXISTS idx_escrows_seller_agent ON escrows(seller_agent_id);
 CREATE INDEX IF NOT EXISTS idx_escrows_buyer_agent ON escrows(buyer_agent_id);
 CREATE INDEX IF NOT EXISTS idx_escrows_state ON escrows(state);
+CREATE INDEX IF NOT EXISTS idx_escrows_created_at ON escrows(created_at);
 
 CREATE TABLE IF NOT EXISTS agent_reputation (
   agent_id INTEGER PRIMARY KEY,
@@ -135,9 +136,64 @@ CREATE INDEX IF NOT EXISTS idx_bounties_status ON bounties(status);
 CREATE INDEX IF NOT EXISTS idx_bounties_category ON bounties(category);
 CREATE INDEX IF NOT EXISTS idx_bounties_expires ON bounties(expires_at);
 
+CREATE TABLE IF NOT EXISTS skills (
+  id TEXT PRIMARY KEY, -- uuid
+  seller TEXT NOT NULL,
+  seller_agent_id INTEGER NOT NULL DEFAULT 0,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  long_description TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL DEFAULT '',
+  price TEXT NOT NULL DEFAULT '0',
+  price_token TEXT NOT NULL DEFAULT 'ETH',
+  tags TEXT NOT NULL DEFAULT '[]', -- JSON array
+  delivery TEXT NOT NULL DEFAULT 'instant', -- instant, 1h, 24h, 7d
+  content_hash TEXT NOT NULL DEFAULT '', -- swarm reference
+  status TEXT NOT NULL DEFAULT 'active', -- active, sold, delisted
+  total_sales INTEGER NOT NULL DEFAULT 0,
+  avg_rating INTEGER NOT NULL DEFAULT 0, -- 0-500 (x100)
+  created_at INTEGER NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_skills_seller ON skills(seller);
+CREATE INDEX IF NOT EXISTS idx_skills_category ON skills(category);
+CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
+CREATE INDEX IF NOT EXISTS idx_skills_created_at ON skills(created_at);
+
+CREATE TABLE IF NOT EXISTS votes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  voter TEXT NOT NULL, -- wallet address
+  voter_agent_id INTEGER NOT NULL DEFAULT 0,
+  target_type TEXT NOT NULL, -- 'skill' or 'agent'
+  target_id TEXT NOT NULL, -- skill uuid or agent_id as string
+  value INTEGER NOT NULL, -- +1 or -1
+  created_at INTEGER NOT NULL,
+  UNIQUE(voter, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_votes_target ON votes(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_votes_voter ON votes(voter);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  author TEXT NOT NULL, -- wallet address
+  author_agent_id INTEGER NOT NULL DEFAULT 0,
+  target_type TEXT NOT NULL, -- 'skill' or 'agent'
+  target_id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_target ON comments(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_skills_content_hash ON skills(content_hash);
+CREATE INDEX IF NOT EXISTS idx_escrows_content_hash ON escrows(content_hash);
+CREATE INDEX IF NOT EXISTS idx_events_timestamp ON escrow_events(block_timestamp);
+
 CREATE TABLE IF NOT EXISTS monitor_state (
   chain_id INTEGER PRIMARY KEY,
   last_block INTEGER NOT NULL DEFAULT 0,
-  last_block_hash TEXT NOT NULL DEFAULT '',
   last_updated TEXT NOT NULL DEFAULT (datetime('now'))
 );

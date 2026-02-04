@@ -10,6 +10,8 @@ import { walletRoutes } from './routes/wallets.js'
 import { escrowRoutes } from './routes/escrows.js'
 import { statsRoutes } from './routes/stats.js'
 import { bountyRoutes } from './routes/bounties.js'
+import { skillRoutes } from './routes/skills.js'
+import { marketRoutes } from './routes/market.js'
 import { dashboardRoutes } from './routes/dashboard.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -57,6 +59,8 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   v1.use('/wallets', walletRoutes(db))
   v1.use('/escrows', escrowRoutes(db))
   v1.use('/bounties', bountyRoutes(db))
+  v1.use('/skills', skillRoutes(db))
+  v1.use('/market', marketRoutes(db))
   v1.use('/stats', statsRoutes(db, indexer))
   v1.use('/dashboard', dashboardRoutes(db, indexer))
 
@@ -113,6 +117,23 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
 
   // Serve static files (landing page)
   app.use(express.static(join(__dirname, '../../public')))
+
+  // SPA fallback for /skills and /skill/:id
+  app.get('/skills', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/skills.html'))
+  })
+  app.get('/skill/:id', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/skill.html'))
+  })
+  app.get('/agent/:id', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/agent.html'))
+  })
+  app.get('/bounties', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/bounties.html'))
+  })
+  app.get('/bounty/:id', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/bounty.html'))
+  })
 
   return app
 }
