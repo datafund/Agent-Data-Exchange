@@ -1,14 +1,19 @@
 import { signMessage } from 'viem/accounts'
 import { createPublicClient, http } from 'viem'
 import { mainnet } from 'viem/chains'
+import { FDSKeystoreManager } from '@fairdatasociety/fds-id'
 import { session } from '../session.js'
 
 export const registerAccountTool = {
   name: 'df_register_account',
-  description: `Register ENS subdomain and get FREE 4GB Swarm stamp (valid 1 week).
+  description: `Full account registration: ENS subdomain + stamp + keystore backup.
 
-Requires df_generate_keypair first — keys are generated and stored locally.
-This tool registers your local identity on-chain and allocates storage.`,
+1. Register ENS subdomain (addr + public key)
+2. Allocate FREE 4GB Swarm stamp (1 week trial)
+3. Create encrypted keystore
+4. Backup keystore to Swarm + set encrypted hash in ENS
+
+Requires df_generate_keypair first. After this, account is fully recoverable from any machine using just subdomain + password.`,
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -16,15 +21,20 @@ This tool registers your local identity on-chain and allocates storage.`,
         type: 'string',
         description: 'ENS subdomain to register (e.g., "alice" → alice.fairdata.eth)',
       },
+      password: {
+        type: 'string',
+        description: 'Password for keystore encryption and backup (min 6 chars)',
+      },
       api_url: {
         type: 'string',
         description: 'FDS ID API URL (default: https://id.fairdatasociety.org)',
       },
     },
-    required: ['subdomain'],
+    required: ['subdomain', 'password'],
   },
   async execute(args: {
     subdomain: string
+    password: string
     api_url?: string
   }) {
     // Require local keys
@@ -152,8 +162,54 @@ Issued At: ${issuedAt}`
 
     const stampSuccess = !!stampData?.stampId
 
+    // Step 3: Create keystore and backup to Swarm + ENS
+    let backupResult: { success: boolean; swarmReference?: string; ensTxHash?: string; error?: string } = {
+      success: false,
+      error: 'Not attempted',
+    }
+
+    try {
+      // Create keystore
+      const account = {
+        subdomain: args.subdomain,
+        publicKey: publicKey.startsWith('0x') ? publicKey.slice(2) : publicKey,
+        privateKey: rawPrivateKey.replace(/^0x/, ''),
+        walletAddress: address,
+        created: Date.now(),
+      }
+
+      const keystore = await FDSKeystoreManager.encrypt(account, args.password)
+
+      // Backup to Swarm + ENS via API
+      const backupResponse = await fetch(`${apiUrl}/api/backup/full`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keystore,
+          password: args.password,
+          subdomain: args.subdomain,
+          publicKey: publicKey.startsWith('0x') ? publicKey : `0x${publicKey}`,
+        }),
+      })
+
+      if (backupResponse.ok) {
+        const data = await backupResponse.json() as {
+          success: boolean
+          swarmReference?: string
+          ensTxHash?: string
+          error?: string
+        }
+        backupResult = data
+      } else {
+        const err = await backupResponse.json().catch(() => ({})) as { error?: string }
+        backupResult = { success: false, error: err.error || backupResponse.statusText }
+      }
+    } catch (error) {
+      backupResult = { success: false, error: (error as Error).message }
+    }
+
     return {
-      success: true, // ENS registration succeeded (would have thrown otherwise)
+      success: true,
       subdomain: args.subdomain,
       ensName: `${args.subdomain}.fairdata.eth`,
       walletAddress: address,
@@ -171,18 +227,22 @@ Issued At: ${issuedAt}`
       } : {
         allocated: false,
         error: stampData?.error || 'Failed to allocate stamp',
-        note: 'ENS registration succeeded. Retry stamp with SIWE auth or fund your own.',
+      },
+      backup: backupResult.success ? {
+        saved: true,
+        swarmReference: backupResult.swarmReference,
+        ensTxHash: backupResult.ensTxHash,
+        recoverable: `Use subdomain "${args.subdomain}" + password to restore from any machine`,
+      } : {
+        saved: false,
+        error: backupResult.error,
+        note: 'Use df_backup_keystore to retry backup manually.',
       },
       session: 'Keys remain local, subdomain + stamp saved to session',
-      next_steps: stampSuccess
-        ? [
-            'Ready to upload! Use df_sell to list content.',
-            'Fund wallet with Base ETH for escrow transactions: https://bridge.base.org',
-          ]
-        : [
-            'Stamp failed but ENS succeeded. You can still use the marketplace with your own stamp.',
-            'Fund wallet with Base ETH: https://bridge.base.org',
-          ],
+      next_steps: [
+        'Ready to use! df_sell to list content, df_buy to purchase.',
+        'Fund wallet with Base ETH for escrow transactions: https://bridge.base.org',
+      ],
     }
   },
 }
