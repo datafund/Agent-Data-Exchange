@@ -2,7 +2,7 @@ import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { createDecipheriv } from 'crypto'
 import { writeFileSync } from 'fs'
-import { keccak256, toHex } from 'viem'
+import { keccak256 } from 'viem'
 import { session } from '../session.js'
 import { callRemoteTool } from '../proxy.js'
 
@@ -64,31 +64,16 @@ export const downloadContentTool = {
       )
     }
 
-    // Step 2: Fetch KeyRevealed event from marketplace indexer
-    const MARKETPLACE_URL = process.env.MARKETPLACE_URL || 'https://agents.datafund.io'
+    // Step 2: Read KeyRevealed event directly from blockchain (decentralized, no indexer)
     let encryptedKeyForBuyerHex: string | undefined
 
     for (let attempt = 0; attempt < 5; attempt++) {
-      const eventsRes = await fetch(
-        `${MARKETPLACE_URL}/api/v1/escrows/${escrowId}/events?since=0`,
-      )
-      if (!eventsRes.ok) {
-        throw new Error(`Failed to fetch escrow events: ${eventsRes.status}`)
-      }
+      const revealResult = (await callRemoteTool('fairdrop_get_revealed_key', {
+        escrow_id: escrowId,
+      })) as { found: boolean; encryptedKeyForBuyer?: string; state?: string }
 
-      const eventsData = (await eventsRes.json()) as {
-        events: Array<{
-          event_type: string
-          data: Record<string, unknown>
-        }>
-      }
-
-      const keyEvent = eventsData.events.find(
-        (e) => e.event_type === 'key_revealed',
-      )
-      if (keyEvent) {
-        const eventData = keyEvent.data
-        encryptedKeyForBuyerHex = (eventData.encryptedKeyForBuyer || eventData.serializedEncryptedKey) as string
+      if (revealResult.found && revealResult.encryptedKeyForBuyer) {
+        encryptedKeyForBuyerHex = revealResult.encryptedKeyForBuyer
         break
       }
 
@@ -99,7 +84,7 @@ export const downloadContentTool = {
 
     if (!encryptedKeyForBuyerHex) {
       throw new Error(
-        'KeyRevealed event not found. The seller may not have released the key yet, or the indexer is still catching up.',
+        'KeyRevealed event not found on-chain. The seller may not have released the key yet.',
       )
     }
 
@@ -109,7 +94,11 @@ export const downloadContentTool = {
 
     // Deserialize: [33 ephemeralPubkey][12 IV][ciphertext+tag]
     if (serializedKey.length < 33 + 12 + 32) {
-      throw new Error(`Invalid encrypted key: too short (${serializedKey.length} bytes)`)
+      throw new Error(
+        `Invalid encrypted key: ${serializedKey.length} bytes, expected 93+. ` +
+        `The seller may have revealed the raw key instead of the ECIES-encrypted key. ` +
+        `This escrow cannot be securely decrypted — the raw key is visible to everyone on-chain.`,
+      )
     }
 
     const ephemeralPubkey = serializedKey.slice(0, 33)
