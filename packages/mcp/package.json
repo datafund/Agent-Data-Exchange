@@ -1,6 +1,6 @@
 {
   "name": "@datafund/agent-data-exchange",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Unified MCP server for the Datafund Skill Exchange — identity, signing, escrow, marketplace",
   "main": "dist/index.js",
   "bin": {

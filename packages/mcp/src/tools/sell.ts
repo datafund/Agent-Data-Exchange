@@ -1,4 +1,4 @@
-import { createPublicClient, http, formatEther, decodeEventLog } from 'viem'
+import { createPublicClient, http, formatEther, decodeEventLog, keccak256 } from 'viem'
 import { base } from 'viem/chains'
 import * as fs from 'fs'
 import * as path from 'path'
@@ -107,21 +107,58 @@ export const sellTool = {
     }
 
     // Step 1: Prepare escrow (uploads content, returns unsigned tx)
-    const prepareResult = await callRemoteTool('fairdrop_prepare_escrow', {
-      content_base64: args.content_base64,
-      file_path: args.file_path,
-      price_wei: args.price_wei,
-      expiry_days: args.expiry_days || 7,
-      name: args.name,
-      description: args.description,
-      category: args.category,
-    }) as {
+    // Retries the entire prepare (encrypt + upload) if Swarm verification fails.
+    const MAX_UPLOAD_ATTEMPTS = 3
+    let prepareResult!: {
       transaction: Record<string, unknown>
       encryptedDataRef: string
       contentHash: string
       keyCommitment: string
       encryptionKey: string
       salt: string
+    }
+
+    for (let uploadAttempt = 1; uploadAttempt <= MAX_UPLOAD_ATTEMPTS; uploadAttempt++) {
+      prepareResult = await callRemoteTool('fairdrop_prepare_escrow', {
+        content_base64: args.content_base64,
+        file_path: args.file_path,
+        price_wei: args.price_wei,
+        expiry_days: args.expiry_days || 7,
+        name: args.name,
+        description: args.description,
+        category: args.category,
+      }) as typeof prepareResult
+
+      if (!prepareResult.encryptedDataRef) {
+        throw new Error(
+          'fairdrop_prepare_escrow did not return an encryptedDataRef. ' +
+          'The Swarm upload may have failed silently. Check the Bee node connection and postage stamp balance.'
+        )
+      }
+
+      // Step 1b: Verify uploaded data is retrievable from Swarm before committing on-chain
+      const verified = await verifySwarmUpload(
+        prepareResult.encryptedDataRef,
+        prepareResult.contentHash,
+      )
+
+      if (verified) break
+
+      if (uploadAttempt < MAX_UPLOAD_ATTEMPTS) {
+        // Wait before retry — gives Swarm time to propagate or postage issue to be noticed
+        const delay = uploadAttempt * 5_000
+        await new Promise(r => setTimeout(r, delay))
+      } else {
+        throw new Error(
+          `Swarm upload verification failed after ${MAX_UPLOAD_ATTEMPTS} attempts. ` +
+          `The encrypted content (ref: ${prepareResult.encryptedDataRef}) could not be downloaded back from Swarm. ` +
+          'Possible causes:\n' +
+          '  1. Postage stamp has insufficient balance or has expired — check with fairdrop_status\n' +
+          '  2. Bee node is not synced or not connected to the network\n' +
+          '  3. Network propagation delay — try again in a few minutes\n' +
+          'The on-chain escrow was NOT created. No funds were spent.'
+        )
+      }
     }
 
     // Step 2: Verify transaction intent
@@ -290,4 +327,58 @@ export const sellTool = {
       ],
     }
   },
+}
+
+/**
+ * Verify that uploaded data exists on Swarm and matches the expected content hash.
+ * Retries download with backoff to account for Swarm propagation delay.
+ */
+async function verifySwarmUpload(
+  encryptedDataRef: string,
+  expectedContentHash: string,
+): Promise<boolean> {
+  const MAX_DOWNLOAD_ATTEMPTS = 3
+  const RETRY_DELAY_MS = 3_000
+
+  for (let attempt = 1; attempt <= MAX_DOWNLOAD_ATTEMPTS; attempt++) {
+    try {
+      const downloadResult = (await callRemoteTool('fairdrop_download_bytes', {
+        reference: encryptedDataRef,
+      })) as { data_base64: string; size: number }
+
+      if (!downloadResult.data_base64 || downloadResult.size === 0) {
+        if (attempt < MAX_DOWNLOAD_ATTEMPTS) {
+          await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+          continue
+        }
+        return false
+      }
+
+      // Verify content hash matches what prepareEscrow computed
+      const blob = Buffer.from(downloadResult.data_base64, 'base64')
+      const computedHash = keccak256(new Uint8Array(blob))
+      const expected = expectedContentHash.startsWith('0x')
+        ? expectedContentHash
+        : `0x${expectedContentHash}`
+
+      if (computedHash.toLowerCase() !== expected.toLowerCase()) {
+        throw new Error(
+          `Swarm content hash mismatch after upload. ` +
+          `Expected: ${expected}, got: ${computedHash}. ` +
+          'The data on Swarm does not match what was encrypted locally. This should not happen.'
+        )
+      }
+
+      return true
+    } catch (err) {
+      // If it's a hash mismatch, don't retry — something is fundamentally wrong
+      if (err instanceof Error && err.message.includes('hash mismatch')) {
+        throw err
+      }
+      if (attempt < MAX_DOWNLOAD_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS))
+      }
+    }
+  }
+  return false
 }
