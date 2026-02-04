@@ -1,6 +1,7 @@
 import * as secp256k1 from '@noble/secp256k1'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { createDecipheriv } from 'crypto'
+import { bytesToHex } from '@noble/hashes/utils.js'
+import { gcm } from '@noble/ciphers/aes'
 import { writeFileSync } from 'fs'
 import { keccak256 } from 'viem'
 import { session } from '../session.js'
@@ -110,15 +111,17 @@ export const downloadContentTool = {
     // sha256 of x-coordinate (skip prefix byte)
     const aesKeyForKeyDecrypt = sha256(sharedPoint.slice(1))
 
-    // AES-GCM decrypt: split last 16 bytes as auth tag
-    const keyAuthTag = keyCiphertextWithTag.slice(-16)
-    const keyCiphertext = keyCiphertextWithTag.slice(0, -16)
-
-    const keyDecipher = createDecipheriv('aes-256-gcm', aesKeyForKeyDecrypt, keyIv)
-    keyDecipher.setAuthTag(keyAuthTag)
-    const decryptedKeyPart1 = keyDecipher.update(keyCiphertext)
-    const decryptedKeyPart2 = keyDecipher.final()
-    const contentAesKey = Buffer.concat([decryptedKeyPart1, decryptedKeyPart2])
+    // AES-GCM decrypt using @noble/ciphers (same library as encryption side)
+    let contentAesKey: Uint8Array
+    try {
+      contentAesKey = gcm(aesKeyForKeyDecrypt, keyIv).decrypt(keyCiphertextWithTag)
+    } catch (err) {
+      throw new Error(
+        `Step 3 FAILED: ECIES key decryption error: ${err instanceof Error ? err.message : err}. ` +
+        `serializedKey=${serializedKey.length}bytes, ephPub=${bytesToHex(ephemeralPubkey).slice(0, 10)}..., ` +
+        `ciphertext=${keyCiphertextWithTag.length}bytes, sharedPoint=${sharedPoint.length}bytes`,
+      )
+    }
 
     if (contentAesKey.length !== 32) {
       throw new Error(`Decrypted AES key is ${contentAesKey.length} bytes, expected 32`)
@@ -155,14 +158,16 @@ export const downloadContentTool = {
 
     const contentIv = encryptedBlob.subarray(0, 12)
     const contentCiphertextWithTag = encryptedBlob.subarray(12)
-    const contentAuthTag = contentCiphertextWithTag.subarray(-16)
-    const contentCiphertext = contentCiphertextWithTag.subarray(0, -16)
-
-    const contentDecipher = createDecipheriv('aes-256-gcm', contentAesKey, contentIv)
-    contentDecipher.setAuthTag(contentAuthTag)
-    const decryptedPart1 = contentDecipher.update(contentCiphertext)
-    const decryptedPart2 = contentDecipher.final()
-    const decryptedContent = Buffer.concat([decryptedPart1, decryptedPart2])
+    let decryptedContent: Uint8Array
+    try {
+      decryptedContent = gcm(contentAesKey, contentIv).decrypt(contentCiphertextWithTag)
+    } catch (err) {
+      throw new Error(
+        `Step 6 FAILED: Content decryption error: ${err instanceof Error ? err.message : err}. ` +
+        `blob=${encryptedBlob.length}bytes, iv=${bytesToHex(contentIv)}, ` +
+        `decryptedKeyHex=${bytesToHex(contentAesKey)}, contentHash verified=true`,
+      )
+    }
 
     // Step 7: Write decrypted content to disk
     writeFileSync(args.output_path, decryptedContent)

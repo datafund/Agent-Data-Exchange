@@ -1,5 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
+import * as secp256k1 from '@noble/secp256k1'
+import { keccak256 } from 'viem'
 import { session } from '../session.js'
 import { callRemoteTool } from '../proxy.js'
 import { verifyTransaction, type UnsignedTx } from '../tx-verify.js'
@@ -98,29 +100,53 @@ export const releaseKeyTool = {
       escrowInfo.stateCode === 2 ||
       escrowInfo.state === '2'
 
-    // Get buyer pubkey from escrow if not provided
+    // Get buyer pubkey: args → ENS lookup (by name or address)
     let buyerPubkey = args.buyer_pubkey
     if (!buyerPubkey) {
-      if (escrowInfo.buyerPublicKey) {
-        buyerPubkey = escrowInfo.buyerPublicKey
-      } else {
-        const lookupName = args.buyer_ens_name || escrowInfo.buyerEnsName || escrowInfo.buyer
-        if (lookupName && lookupName.includes('.')) {
-          try {
-            const lookupResult = await callRemoteTool('fairdrop_lookup', {
-              name: lookupName,
-            }) as { publicKey: string | null }
-            buyerPubkey = lookupResult.publicKey || undefined
-          } catch {
-            // Lookup failed
+      // Try ENS name first, then buyer address (reverse ENS)
+      const lookupTargets = [
+        args.buyer_ens_name,
+        escrowInfo.buyerEnsName,
+        escrowInfo.buyer,
+      ].filter(Boolean) as string[]
+
+      for (const target of lookupTargets) {
+        try {
+          const lookupResult = await callRemoteTool('fairdrop_lookup', {
+            name: target,
+          }) as { publicKey: string | null }
+          if (lookupResult.publicKey) {
+            buyerPubkey = lookupResult.publicKey
+            break
           }
+        } catch {
+          // Lookup failed, try next
         }
       }
 
       if (!buyerPubkey) {
         throw new Error(
           `Cannot resolve buyer public key for ${escrowInfo.buyer}. ` +
-          `Provide buyer_pubkey parameter manually.`
+          `The buyer may not have registered their public key in ENS. ` +
+          `Provide buyer_pubkey or buyer_ens_name manually.`
+        )
+      }
+    }
+
+    // Verify public key matches the on-chain buyer address
+    if (escrowInfo.buyer && escrowInfo.buyer !== 'unknown') {
+      const pubkeyHex = buyerPubkey.startsWith('0x') ? buyerPubkey.slice(2) : buyerPubkey
+      const point = secp256k1.Point.fromHex(pubkeyHex)
+      const uncompressedHex = point.toHex(false) // 130 hex chars: 04 || x || y
+      const xyHex = uncompressedHex.slice(2) // strip 04 prefix
+      const derivedAddress = '0x' + keccak256(`0x${xyHex}` as `0x${string}`).slice(-40)
+
+      if (derivedAddress.toLowerCase() !== escrowInfo.buyer.toLowerCase()) {
+        throw new Error(
+          `Buyer public key does not match on-chain buyer address! ` +
+          `Derived: ${derivedAddress}, on-chain: ${escrowInfo.buyer}. ` +
+          `Using the wrong public key would make the escrow unrecoverable. ` +
+          `Provide the correct buyer_pubkey or buyer_ens_name.`
         )
       }
     }

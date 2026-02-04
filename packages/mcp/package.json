@@ -1,6 +1,6 @@
 {
   "name": "@datafund/agent-data-exchange",
-  "version": "0.3.6",
+  "version": "0.3.10",
   "description": "Unified MCP server for the Datafund Skill Exchange — identity, signing, escrow, marketplace",
   "main": "dist/index.js",
   "bin": {
@@ -17,6 +17,7 @@
   "dependencies": {
     "@fairdatasociety/fds-id": "^0.1.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@noble/ciphers": "^1.0.0",
     "@noble/hashes": "^2.0.1",
     "@noble/secp256k1": "^3.0.0",
     "viem": "^2.45.1"
