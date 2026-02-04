@@ -13,7 +13,7 @@ const ESCROW_KEYS_DIR = path.join(
 
 export const releaseKeyTool = {
   name: 'df_release_key',
-  description: 'Composite: Commit key → wait → reveal key (two on-chain transactions). Releases the decryption key to the buyer.',
+  description: 'Composite: Commit key → wait → reveal key (two on-chain transactions). Releases the decryption key to the buyer. Automatically resumes from KEY_COMMITTED state if commit was already done.',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -47,16 +47,9 @@ export const releaseKeyTool = {
     let encryptionKey = args.encryption_key || escrowState?.encryptionKey
 
     // Try to load from backup file if not in session
+    const backupData = loadCommitDataFromFile(args.escrow_id)
     if (!encryptionKey) {
-      const keyFilePath = path.join(ESCROW_KEYS_DIR, `escrow-${args.escrow_id}.json`)
-      if (fs.existsSync(keyFilePath)) {
-        try {
-          const backup = JSON.parse(fs.readFileSync(keyFilePath, 'utf-8')) as { encryptionKey?: string }
-          encryptionKey = backup.encryptionKey
-        } catch {
-          // Ignore parse errors
-        }
-      }
+      encryptionKey = backupData?.encryptionKey
     }
 
     if (!encryptionKey) {
@@ -67,41 +60,59 @@ export const releaseKeyTool = {
       )
     }
 
-    // Get escrow status to check state and buyer pubkey
-    const escrowInfo = await callRemoteTool('fairdrop_escrow_status', {
-      escrow_id: args.escrow_id,
-    }) as {
+    // Check for saved commit data FIRST (most reliable indicator of KEY_COMMITTED)
+    const savedCommitData = (escrowState?.serializedEncryptedKey && escrowState?.commitmentSalt)
+      ? escrowState
+      : backupData
+
+    const hasCommitData = !!(savedCommitData?.serializedEncryptedKey && savedCommitData?.commitmentSalt)
+
+    // Get escrow status for buyer pubkey and state verification
+    let escrowInfo: {
       buyer: string
       buyerPublicKey?: string
       buyerEnsName?: string
-      state: string
+      state?: string
+      stateCode?: number
       commitBlock?: number
     }
 
-    // State machine check - KeyCommitted = 2 (handle different API formats)
-    const stateUpper = escrowInfo.state?.toUpperCase?.() || ''
-    const isKeyCommitted = stateUpper === 'KEYCOMMITTED' || stateUpper === 'KEY_COMMITTED' || escrowInfo.state === '2'
+    try {
+      escrowInfo = await callRemoteTool('fairdrop_escrow_status', {
+        escrow_id: args.escrow_id,
+      }) as typeof escrowInfo
+    } catch (err: any) {
+      // If we have commit data, we can still try reveal without remote state
+      if (hasCommitData && args.buyer_pubkey) {
+        escrowInfo = { buyer: 'unknown', state: 'KEY_COMMITTED' }
+      } else {
+        throw new Error(`Failed to get escrow status: ${err?.message || err}`)
+      }
+    }
+
+    // Determine if escrow is in KEY_COMMITTED state
+    // Check multiple formats: string state, stateCode number, AND local commit data
+    const stateStr = String(escrowInfo.state || '').toUpperCase().replace(/[_\s]/g, '')
+    const isKeyCommitted = hasCommitData ||
+      stateStr === 'KEYCOMMITTED' ||
+      escrowInfo.stateCode === 2 ||
+      escrowInfo.state === '2'
 
     // Get buyer pubkey from escrow if not provided
     let buyerPubkey = args.buyer_pubkey
     if (!buyerPubkey) {
-      // First check if escrow status directly provides the public key
       if (escrowInfo.buyerPublicKey) {
         buyerPubkey = escrowInfo.buyerPublicKey
       } else {
-        // Determine ENS name to lookup: parameter > escrow field > address
         const lookupName = args.buyer_ens_name || escrowInfo.buyerEnsName || escrowInfo.buyer
-
-        // Only attempt lookup if we have an ENS name (contains ".")
-        if (lookupName.includes('.')) {
+        if (lookupName && lookupName.includes('.')) {
           try {
             const lookupResult = await callRemoteTool('fairdrop_lookup', {
               name: lookupName,
             }) as { publicKey: string | null }
-
             buyerPubkey = lookupResult.publicKey || undefined
           } catch {
-            // Lookup failed, will error below
+            // Lookup failed
           }
         }
       }
@@ -109,39 +120,28 @@ export const releaseKeyTool = {
       if (!buyerPubkey) {
         throw new Error(
           `Cannot resolve buyer public key for ${escrowInfo.buyer}. ` +
-          `The buyer may need to register an FDS identity first, or provide their public key directly. ` +
-          `Use buyer_pubkey parameter to provide it manually.`
+          `Provide buyer_pubkey parameter manually.`
         )
       }
     }
 
-    // Variables for commit data (either from new commit or loaded from session/file)
     let serializedEncryptedKey: string
     let commitmentSalt: string
     let commitTxHash: string | undefined
 
-    // Check if already committed - if so, skip to reveal
-    if (isKeyCommitted) {
-      // Load commit data from session or backup file
-      const savedCommitData = escrowState?.serializedEncryptedKey && escrowState?.commitmentSalt
-        ? escrowState
-        : loadCommitDataFromFile(args.escrow_id)
-
-      if (!savedCommitData?.serializedEncryptedKey || !savedCommitData?.commitmentSalt) {
-        throw new Error(
-          `Escrow ${args.escrow_id} is in KeyCommitted state but commit data (salt) not found. ` +
-          `Checked session and backup file. The commit data was likely lost. ` +
-          `You may need to wait for escrow expiry or contact support.`
-        )
-      }
-
-      serializedEncryptedKey = savedCommitData.serializedEncryptedKey
-      commitmentSalt = savedCommitData.commitmentSalt
+    if (isKeyCommitted && hasCommitData) {
+      // Resume from KEY_COMMITTED — skip straight to reveal
+      serializedEncryptedKey = savedCommitData!.serializedEncryptedKey!
+      commitmentSalt = savedCommitData!.commitmentSalt!
       commitTxHash = 'skipped-already-committed'
-
-      // No need to wait - already past commit block
+    } else if (isKeyCommitted && !hasCommitData) {
+      throw new Error(
+        `Escrow ${args.escrow_id} is in KeyCommitted state but commit data (salt) not found locally. ` +
+        `Checked session and ~/.datafund/escrow-keys/escrow-${args.escrow_id}.json. ` +
+        `The commit data was lost. Wait for escrow expiry to reclaim funds.`
+      )
     } else {
-      // Phase 1: Commit (only if not already committed)
+      // Phase 1: Commit
       const commitResult = await callRemoteTool('fairdrop_prepare_commit', {
         escrow_id: args.escrow_id,
         encryption_key: encryptionKey,
@@ -167,12 +167,11 @@ export const releaseKeyTool = {
         signed_tx: commitSign.signed_tx,
       }) as { txHash: string }
 
-      // Set commit data for reveal phase
       serializedEncryptedKey = commitResult.serializedEncryptedKey
       commitmentSalt = commitResult.commitmentSalt
       commitTxHash = commitSubmit.txHash
 
-      // Save commit data to session AND file for reveal (survives restart)
+      // Save commit data for reveal (survives restart)
       session.updateEscrow(args.escrow_id, {
         serializedEncryptedKey,
         commitmentSalt,
@@ -183,7 +182,7 @@ export const releaseKeyTool = {
       await new Promise(resolve => setTimeout(resolve, 65_000))
     }
 
-    // Phase 2: Reveal (always runs - uses commit data from either path)
+    // Phase 2: Reveal
     const revealResult = await callRemoteTool('fairdrop_prepare_reveal', {
       escrow_id: args.escrow_id,
       serialized_encrypted_key: serializedEncryptedKey,
@@ -210,7 +209,7 @@ export const releaseKeyTool = {
       escrowId: args.escrow_id,
       commitTxHash: commitTxHash || 'already-committed',
       revealTxHash: revealSubmit.txHash,
-      skippedCommit: isKeyCommitted,
+      skippedCommit: commitTxHash === 'skipped-already-committed',
       next_steps: [
         'Wait for the buyer to confirm receipt',
         'df_claim — claim your payment after buyer confirms or timeout',
@@ -219,8 +218,11 @@ export const releaseKeyTool = {
   },
 }
 
-// Helper to load commit data from backup file
-function loadCommitDataFromFile(escrowId: string): { serializedEncryptedKey?: string; commitmentSalt?: string } | null {
+function loadCommitDataFromFile(escrowId: string): {
+  encryptionKey?: string
+  serializedEncryptedKey?: string
+  commitmentSalt?: string
+} | null {
   const keyFilePath = path.join(ESCROW_KEYS_DIR, `escrow-${escrowId}.json`)
   if (fs.existsSync(keyFilePath)) {
     try {
@@ -232,9 +234,9 @@ function loadCommitDataFromFile(escrowId: string): { serializedEncryptedKey?: st
   return null
 }
 
-// Helper to save commit data to backup file
 function saveCommitDataToFile(escrowId: string, serializedEncryptedKey: string, commitmentSalt: string): void {
   try {
+    fs.mkdirSync(ESCROW_KEYS_DIR, { recursive: true, mode: 0o700 })
     const keyFilePath = path.join(ESCROW_KEYS_DIR, `escrow-${escrowId}.json`)
     const existing = loadCommitDataFromFile(escrowId) || {}
     fs.writeFileSync(keyFilePath, JSON.stringify({

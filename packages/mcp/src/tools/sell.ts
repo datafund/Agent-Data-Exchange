@@ -229,6 +229,7 @@ export const sellTool = {
       fs.writeFileSync(keyFilePath, JSON.stringify({
         escrowId,
         encryptionKey: prepareResult.encryptionKey,
+        encryptedDataRef: prepareResult.encryptedDataRef,
         salt: prepareResult.salt,
         contentHash: prepareResult.contentHash,
         seller: address,
@@ -256,6 +257,7 @@ export const sellTool = {
           priceToken: 'ETH',
           escrowId: parseInt(escrowId, 10),
           contentHash: prepareResult.contentHash,
+          encryptedDataRef: prepareResult.encryptedDataRef,
           tags: args.tags || [],
         }),
       })

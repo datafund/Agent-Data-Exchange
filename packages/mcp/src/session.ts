@@ -7,6 +7,7 @@ export interface EscrowState {
   encryptionKey?: string
   serializedEncryptedKey?: string
   commitmentSalt?: string
+  encryptedDataRef?: string
   role: 'seller' | 'buyer'
 }
 

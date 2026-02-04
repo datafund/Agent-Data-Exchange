@@ -32,11 +32,12 @@ import {
   watchCategoryTool,
   suggestPriceTool,
   marketSummaryTool,
-  // Composite (4)
+  // Composite (5)
   sellTool,
   buyTool,
   releaseKeyTool,
   claimTool,
+  downloadContentTool,
   // Polling (2)
   waitForStateTool,
   myEscrowsTool,
@@ -81,11 +82,12 @@ const tools = [
   publishSkillTool,
   checkReputationTool,
   skillDetailsTool,
-  // Composite workflows (4)
+  // Composite workflows (5)
   sellTool,
   buyTool,
   releaseKeyTool,
   claimTool,
+  downloadContentTool,
   // State & polling (2)
   waitForStateTool,
   myEscrowsTool,

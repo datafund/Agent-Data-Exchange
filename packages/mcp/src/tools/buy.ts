@@ -48,6 +48,7 @@ export const buyTool = {
     }
 
     let escrowId = args.escrow_id
+    let encryptedDataRef: string | undefined
 
     // If skill_id provided, look up escrow details
     if (!escrowId && args.skill_id) {
@@ -56,8 +57,9 @@ export const buyTool = {
         `${MARKETPLACE_URL}/api/v1/skills/${args.skill_id}/purchase-info`
       )
       if (!detailsResponse.ok) throw new Error('Failed to get skill details')
-      const details = await detailsResponse.json() as { escrow_id: string; seller_address: string }
+      const details = await detailsResponse.json() as { escrow_id: string; seller_address: string; encrypted_data_ref?: string; seller?: string }
       escrowId = details.escrow_id
+      encryptedDataRef = details.encrypted_data_ref || undefined
 
       // Check reputation
       if (!args.skip_reputation_check) {
@@ -114,7 +116,7 @@ export const buyTool = {
       signed_tx: signResult.signed_tx,
     }) as { txHash: string }
 
-    session.setEscrow(escrowId, { role: 'buyer' })
+    session.setEscrow(escrowId, { role: 'buyer', encryptedDataRef })
 
     return {
       success: true,
@@ -124,7 +126,7 @@ export const buyTool = {
       next_steps: [
         'Wait for the seller to release the decryption key',
         'df_wait_for_state — poll until "Released"',
-        'df_claim — claim the content + download',
+        'df_download_content — download and decrypt the content',
       ],
     }
   },
