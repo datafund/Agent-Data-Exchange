@@ -292,6 +292,75 @@ export class AgentsDatabase {
     `).run()
   }
 
+  // === Dashboard analytics ===
+
+  getConversionFunnel(): { total: number; funded: number; committed: number; released: number; claimed: number } {
+    const row = this.db.prepare(`
+      SELECT
+        COUNT(*) as total,
+        SUM(CASE WHEN funded_at IS NOT NULL THEN 1 ELSE 0 END) as funded,
+        SUM(CASE WHEN committed_at IS NOT NULL THEN 1 ELSE 0 END) as committed,
+        SUM(CASE WHEN released_at IS NOT NULL THEN 1 ELSE 0 END) as released,
+        SUM(CASE WHEN claimed_at IS NOT NULL THEN 1 ELSE 0 END) as claimed
+      FROM escrows
+    `).get() as Record<string, number>
+    return {
+      total: row.total ?? 0,
+      funded: row.funded ?? 0,
+      committed: row.committed ?? 0,
+      released: row.released ?? 0,
+      claimed: row.claimed ?? 0,
+    }
+  }
+
+  getAvgTimings(): { avg_to_fund: number | null; avg_to_release: number | null; avg_to_claim: number | null } {
+    const row = this.db.prepare(`
+      SELECT
+        AVG(time_to_fund) as avg_to_fund,
+        AVG(time_to_release) as avg_to_release,
+        AVG(time_to_claim) as avg_to_claim
+      FROM escrows WHERE completed = 1
+    `).get() as Record<string, number | null>
+    return {
+      avg_to_fund: row.avg_to_fund,
+      avg_to_release: row.avg_to_release,
+      avg_to_claim: row.avg_to_claim,
+    }
+  }
+
+  getEscrowStateDistribution(): { state: string; count: number }[] {
+    return this.db.prepare(
+      'SELECT state, COUNT(*) as count FROM escrows GROUP BY state ORDER BY count DESC'
+    ).all() as { state: string; count: number }[]
+  }
+
+  getEscrowTimeline(days: number): { date: string; created: number; funded: number; completed: number }[] {
+    const cutoff = Math.floor(Date.now() / 1000) - (days * 86400)
+    return this.db.prepare(`
+      SELECT
+        date(created_at, 'unixepoch') as date,
+        COUNT(*) as created,
+        SUM(CASE WHEN funded_at IS NOT NULL THEN 1 ELSE 0 END) as funded,
+        SUM(CASE WHEN completed = 1 THEN 1 ELSE 0 END) as completed
+      FROM escrows
+      WHERE created_at > ?
+      GROUP BY date(created_at, 'unixepoch')
+      ORDER BY date ASC
+    `).all(cutoff) as { date: string; created: number; funded: number; completed: number }[]
+  }
+
+  getTopAgents(limit: number): AgentReputationRow[] {
+    return this.db.prepare(
+      'SELECT * FROM agent_reputation ORDER BY reputation_score DESC LIMIT ?'
+    ).all(limit) as AgentReputationRow[]
+  }
+
+  getRecentEvents(limit: number): EscrowEventRow[] {
+    return this.db.prepare(
+      'SELECT * FROM escrow_events ORDER BY block_timestamp DESC, log_index DESC LIMIT ?'
+    ).all(limit) as EscrowEventRow[]
+  }
+
   // === Directory listings ===
 
   listAgentReputations(opts: { limit?: number; offset?: number } = {}): AgentReputationRow[] {

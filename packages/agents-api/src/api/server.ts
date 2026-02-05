@@ -134,6 +134,9 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   app.get('/bounty/:id', (_req, res) => {
     res.sendFile(join(__dirname, '../../public/bounty.html'))
   })
+  app.get('/dashboard', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/dashboard.html'))
+  })
 
   return app
 }
