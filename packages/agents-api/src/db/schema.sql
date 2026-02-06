@@ -197,3 +197,22 @@ CREATE TABLE IF NOT EXISTS monitor_state (
   last_block INTEGER NOT NULL DEFAULT 0,
   last_updated TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS waitlist (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  wallet TEXT NOT NULL DEFAULT '',
+  agent_name TEXT NOT NULL DEFAULT '',
+  agent_description TEXT NOT NULL DEFAULT '',
+  platform TEXT NOT NULL DEFAULT '',
+  skills_offered TEXT NOT NULL DEFAULT '[]',
+  skills_wanted TEXT NOT NULL DEFAULT '[]',
+  use_case TEXT NOT NULL DEFAULT '',
+  website TEXT NOT NULL DEFAULT '',
+  github TEXT NOT NULL DEFAULT '',
+  mcp_endpoint TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  UNIQUE(email)
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_email ON waitlist(email);
+CREATE INDEX IF NOT EXISTS idx_waitlist_created ON waitlist(created_at);

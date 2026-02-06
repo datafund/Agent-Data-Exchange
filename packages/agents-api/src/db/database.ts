@@ -762,6 +762,53 @@ export class AgentsDatabase {
     return row.count
   }
 
+  // === Waitlist ===
+
+  createWaitlistEntry(entry: {
+    id: string
+    email: string
+    wallet?: string
+    agentName?: string
+    agentDescription?: string
+    platform?: string
+    skillsOffered?: string[]
+    skillsWanted?: string[]
+    useCase?: string
+    website?: string
+    github?: string
+    mcpEndpoint?: string
+    createdAt: number
+  }): boolean {
+    try {
+      this.db.prepare(
+        `INSERT INTO waitlist (id, email, wallet, agent_name, agent_description, platform, skills_offered, skills_wanted, use_case, website, github, mcp_endpoint, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        entry.id, entry.email.toLowerCase(), entry.wallet ?? '',
+        entry.agentName ?? '', entry.agentDescription ?? '', entry.platform ?? '',
+        JSON.stringify(entry.skillsOffered ?? []), JSON.stringify(entry.skillsWanted ?? []),
+        entry.useCase ?? '', entry.website ?? '', entry.github ?? '',
+        entry.mcpEndpoint ?? '', entry.createdAt,
+      )
+      return true
+    } catch (err: unknown) {
+      if ((err as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') return false
+      throw err
+    }
+  }
+
+  listWaitlistEntries(opts: { limit?: number; offset?: number }): WaitlistRow[] {
+    const limit = Math.min(opts.limit ?? 50, 100)
+    const offset = opts.offset ?? 0
+    return this.db.prepare(
+      'SELECT * FROM waitlist ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    ).all(limit, offset) as WaitlistRow[]
+  }
+
+  countWaitlistEntries(): number {
+    return (this.db.prepare('SELECT COUNT(*) as count FROM waitlist').get() as { count: number }).count
+  }
+
   close() {
     this.db.close()
   }
@@ -1172,6 +1219,22 @@ export interface CommentRow {
   target_type: string
   target_id: string
   body: string
+  created_at: number
+}
+
+export interface WaitlistRow {
+  id: string
+  email: string
+  wallet: string
+  agent_name: string
+  agent_description: string
+  platform: string
+  skills_offered: string
+  skills_wanted: string
+  use_case: string
+  website: string
+  github: string
+  mcp_endpoint: string
   created_at: number
 }
 

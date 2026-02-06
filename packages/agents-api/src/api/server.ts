@@ -13,6 +13,7 @@ import { bountyRoutes } from './routes/bounties.js'
 import { skillRoutes } from './routes/skills.js'
 import { marketRoutes } from './routes/market.js'
 import { dashboardRoutes } from './routes/dashboard.js'
+import { waitlistRoutes } from './routes/waitlist.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -63,6 +64,7 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   v1.use('/market', marketRoutes(db))
   v1.use('/stats', statsRoutes(db, indexer))
   v1.use('/dashboard', dashboardRoutes(db, indexer))
+  v1.use('/waitlist', waitlistRoutes(db))
 
   // Health check alias (Caddy checks /api/v1/health)
   v1.get('/health', (_req, res) => {
