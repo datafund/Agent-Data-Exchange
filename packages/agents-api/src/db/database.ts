@@ -712,6 +712,32 @@ export class AgentsDatabase {
     this.db.prepare(`UPDATE skills SET total_sales = total_sales + 1, updated_at = datetime('now') WHERE id = ?`).run(id)
   }
 
+  /**
+   * Batch query for skill availability - avoids N+1 queries when listing skills.
+   * Returns availability status for multiple skills in a single query.
+   */
+  getAvailabilityForSkills(skillIds: string[]): Map<string, { available: number; totalSales: number }> {
+    if (skillIds.length === 0) return new Map()
+
+    const placeholders = skillIds.map(() => '?').join(',')
+    const rows = this.db.prepare(`
+      SELECT
+        s.id as skill_id,
+        s.total_sales,
+        COUNT(CASE WHEN e.state = 'created' THEN 1 END) as available_count
+      FROM skills s
+      LEFT JOIN escrows e ON e.skill_id = s.id AND e.state = 'created'
+      WHERE s.id IN (${placeholders})
+      GROUP BY s.id
+    `).all(...skillIds) as Array<{ skill_id: string; total_sales: number; available_count: number }>
+
+    const result = new Map<string, { available: number; totalSales: number }>()
+    for (const row of rows) {
+      result.set(row.skill_id, { available: row.available_count, totalSales: row.total_sales })
+    }
+    return result
+  }
+
   // === Votes ===
   upsertVote(vote: { voter: string; voterAgentId?: number; targetType: string; targetId: string; value: number }) {
     const now = Math.floor(Date.now() / 1000)

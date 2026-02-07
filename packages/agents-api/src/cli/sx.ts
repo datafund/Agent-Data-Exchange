@@ -63,6 +63,8 @@ skills.command('create')
   .requiredOption('--price <price>', 'Price in ETH')
   .option('--description <desc>', 'Description')
   .option('--category <cat>', 'Category')
+  .option('--dry-run', 'Preview without publishing')
+  .option('--yes', 'Skip confirmation prompt')
   .action(opts => run(() => cmd.skillsCreate(opts)))
 
 // ── Bounties ──

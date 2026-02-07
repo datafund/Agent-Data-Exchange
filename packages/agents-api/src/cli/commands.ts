@@ -140,8 +140,44 @@ export async function skillsComment(id: string, body: string) {
   return apiPost(`/skills/${encodeURIComponent(id)}/comments`, { body }, key)
 }
 
-export async function skillsCreate(opts: { title: string; price: string; description?: string; category?: string }) {
+export async function skillsCreate(opts: {
+  title: string;
+  price: string;
+  description?: string;
+  category?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+}) {
   const key = requireKey()
+
+  // Show preview
+  console.error('\n📦 Skill Listing Preview:')
+  console.error(`  Title:       ${opts.title}`)
+  console.error(`  Price:       ${opts.price}`)
+  if (opts.description) console.error(`  Description: ${opts.description.slice(0, 100)}${opts.description.length > 100 ? '...' : ''}`)
+  if (opts.category) console.error(`  Category:    ${opts.category}`)
+  console.error('')
+
+  // Dry run - don't actually publish
+  if (opts.dryRun) {
+    console.error('[Dry run] Would publish to registry. No changes made.')
+    return { dryRun: true, title: opts.title, price: opts.price, status: 'not_published' }
+  }
+
+  // Interactive confirmation unless --yes provided
+  if (!opts.yes && process.stdin.isTTY && process.stdout.isTTY) {
+    const { createInterface } = await import('readline')
+    const rl = createInterface({ input: process.stdin, output: process.stderr })
+    const answer = await new Promise<string>(resolve => rl.question('Publish this skill? [y/N] ', resolve))
+    rl.close()
+    if (answer.toLowerCase() !== 'y') {
+      console.error('Cancelled.')
+      process.exit(0)
+    }
+  } else if (!opts.yes) {
+    throw new CLIError('ERR_CONFIRMATION_REQUIRED', 'Publishing requires --yes flag in non-TTY mode', 'Add --yes to confirm')
+  }
+
   return apiPost('/skills', {
     title: opts.title,
     price: opts.price,

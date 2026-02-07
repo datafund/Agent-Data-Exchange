@@ -107,6 +107,17 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
 
   app.use('/api/v1', v1)
 
+  // API redirects: singular to plural for backwards compatibility
+  app.get('/api/v1/skill/:id', (req, res) => {
+    res.redirect(301, `/api/v1/skills/${req.params.id}`)
+  })
+  app.get('/api/v1/skill/:id/purchase-info', (req, res) => {
+    res.redirect(301, `/api/v1/skills/${req.params.id}/purchase-info`)
+  })
+  app.get('/api/v1/bounty/:id', (req, res) => {
+    res.redirect(301, `/api/v1/bounties/${req.params.id}`)
+  })
+
   // Well-known discovery for AI agents
   app.get('/.well-known/ai-plugin.json', (_req, res) => {
     res.sendFile(join(__dirname, '../../public/.well-known/ai-plugin.json'))
@@ -138,6 +149,9 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   })
   app.get('/dashboard', (_req, res) => {
     res.sendFile(join(__dirname, '../../public/dashboard.html'))
+  })
+  app.get('/docs', (_req, res) => {
+    res.sendFile(join(__dirname, '../../public/docs.html'))
   })
 
   return app

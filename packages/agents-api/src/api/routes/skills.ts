@@ -44,7 +44,7 @@ export function skillRoutes(db: AgentsDatabase): Router {
     res.status(201).json({ id, seller: seller.toLowerCase(), title, status: 'active', escrowId: escrowId ?? null, createdAt: now })
   })
 
-  // GET /skills — list skills
+  // GET /skills — list skills with availability status
   router.get('/', (req, res) => {
     const { seller, category, status, limit, offset } = req.query
 
@@ -57,11 +57,47 @@ export function skillRoutes(db: AgentsDatabase): Router {
     })
     const total = db.countSkills({ seller: seller as string, category: category as string, status: (status as string) ?? 'active' })
 
-    res.json({
-      skills: skills.map(s => ({
+    // Batch query for availability to avoid N+1 queries
+    const skillIds = skills.map(s => s.id)
+    const availabilityMap = db.getAvailabilityForSkills(skillIds)
+
+    // Get unique sellers for reputation lookup
+    const uniqueSellers = [...new Set(skills.map(s => s.seller))]
+    const sellerRepMap = new Map<string, { score: number; tier: string }>()
+    for (const sellerAddr of uniqueSellers) {
+      const walletRep = db.getWalletReputation(sellerAddr)
+      const rep = walletRep.seller
+      if (rep) {
+        const totalEscrows = rep.total_created + rep.total_funded
+        sellerRepMap.set(sellerAddr, {
+          score: rep.reputation_score,
+          tier: scoreTier(rep.reputation_score, totalEscrows),
+        })
+      }
+    }
+
+    const enrichedSkills = skills.map(s => {
+      const avail = availabilityMap.get(s.id) || { available: 0, totalSales: 0 }
+      let availability: 'purchasable' | 'sold_out' | 'not_listed'
+      if (avail.available > 0) {
+        availability = 'purchasable'
+      } else if (avail.totalSales > 0) {
+        availability = 'sold_out'
+      } else {
+        availability = 'not_listed'
+      }
+      const sellerRep = sellerRepMap.get(s.seller)
+      return {
         ...s,
         tags: JSON.parse(s.tags),
-      })),
+        availability,
+        available_copies: avail.available,
+        seller_reputation: sellerRep || null,
+      }
+    })
+
+    res.json({
+      skills: enrichedSkills,
       total,
     })
   })
@@ -164,8 +200,21 @@ export function skillRoutes(db: AgentsDatabase): Router {
       return
     }
 
-    // No available escrows — check if any were ever sold
+    // No available escrows — check if any were ever created
     const allEscrows = db.listEscrowsForSkill(req.params.id)
+
+    // Distinguish between "sold out" (had escrows, all consumed) vs "not listed" (never had escrows)
+    if (allEscrows.length === 0) {
+      res.json({
+        status: 'not_listed',
+        seller: skill.seller,
+        content_hash: skill.content_hash,
+        encrypted_data_ref: skill.encrypted_data_ref || '',
+        total_sales: skill.total_sales,
+        note: 'No escrow created yet. Poll this endpoint or create a bounty.',
+      })
+      return
+    }
 
     res.json({
       status: 'sold_out',
@@ -173,9 +222,7 @@ export function skillRoutes(db: AgentsDatabase): Router {
       content_hash: skill.content_hash,
       encrypted_data_ref: skill.encrypted_data_ref || '',
       total_sales: skill.total_sales,
-      note: allEscrows.length > 0
-        ? 'All copies sold. Check back later or contact seller.'
-        : 'No escrow created yet. Poll this endpoint or create a bounty.',
+      note: 'All copies sold. Check back later or contact seller.',
     })
   })
 
