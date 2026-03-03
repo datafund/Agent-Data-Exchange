@@ -205,7 +205,12 @@ async function fetchAndDecryptContent(
     return { error: 'Invalid Swarm reference', status: 500 }
   }
   const swarmUrl = (SWARM_GATEWAY).replace(/\/+$/, '')
-  const swarmRes = await fetch(`${swarmUrl}/bytes/${swarmRef}`)
+  let swarmRes: Response
+  try {
+    swarmRes = await fetch(`${swarmUrl}/bytes/${swarmRef}`)
+  } catch (err) {
+    return { error: 'Failed to fetch content from Swarm', status: 502 }
+  }
   if (!swarmRes.ok) {
     return { error: 'Failed to fetch content from Swarm', status: 502 }
   }

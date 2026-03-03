@@ -295,14 +295,14 @@ describe('API routes', () => {
     })
 
     it('GET /skills/:id/download for free skill redirects', async () => {
-      // Create a free skill with a data ref
+      // Create a free skill with a valid 64-hex Swarm reference
       const createRes = await signedRequest('/api/v1/skills', {
         seller: testAccount.address,
         title: 'Free Pack',
         description: 'A free pack for download',
         category: 'dataset',
         price: '0',
-        encryptedDataRef: 'abc123swarmref',
+        encryptedDataRef: 'a'.repeat(64),
         product_type: 'engram-pack',
         metadata: { version: '0.1.0' },
       })

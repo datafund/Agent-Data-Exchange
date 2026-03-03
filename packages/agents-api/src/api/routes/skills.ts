@@ -5,9 +5,16 @@ import type { SkillRow } from '../../db/database.js'
 import { sanitize, isValidAddress, verifyWalletSignature } from '../sanitize.js'
 import { scoreTier, scoreRecommendation } from '../../reputation/calculator.js'
 import { verifySignature } from '../middleware/verify-signature.js'
+import { x402DownloadHandler } from '../handlers/x402-download.js'
+import { createRateLimit } from '../middleware/rate-limit.js'
 
 const ESCROW_CONTRACT = '0xDd4396d4F28d2b513175ae17dE11e56a898d19c3'
 const CHAIN_ID = 8453
+
+const downloadRateLimit = createRateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+})
 
 function sanitizeSkill(skill: SkillRow): Record<string, unknown> {
   const { x402_content_key, ...rest } = skill as any
@@ -157,6 +164,29 @@ export function skillRoutes(db: AgentsDatabase): Router {
     })
   })
 
+  // GET /skills/x402-payments — list x402 payments for authenticated seller
+  router.get('/x402-payments', verifySignature, (req, res) => {
+    const limit = parseInt(req.query.limit as string) || 20
+    const address = (req as any).verifiedAddress
+    if (!address) {
+      res.status(401).json({ error: 'Signature authentication required' })
+      return
+    }
+    const payments = db.listX402PaymentsBySeller(address, limit)
+    res.json(payments)
+  })
+
+  // GET /skills/x402-payments/pending-forwards — list pending forwards for authenticated seller
+  router.get('/x402-payments/pending-forwards', verifySignature, (req, res) => {
+    const address = (req as any).verifiedAddress
+    if (!address) {
+      res.status(401).json({ error: 'Signature authentication required' })
+      return
+    }
+    const forwards = db.getPendingForwardsBySeller(address)
+    res.json(forwards)
+  })
+
   // GET /skills/:id — get single skill with votes
   router.get('/:id', (req, res) => {
     const skill = db.getSkill(req.params.id)
@@ -288,37 +318,8 @@ export function skillRoutes(db: AgentsDatabase): Router {
     res.json(soldOut)
   })
 
-  // GET /skills/:id/download — free download redirect for unencrypted packs
-  router.get('/:id/download', (req, res) => {
-    const skill = db.getSkill(req.params.id)
-    if (!skill) {
-      res.status(404).json({ error: 'Skill not found' })
-      return
-    }
-
-    // Only allow download for free skills (price "0" or empty) without active escrow
-    const price = skill.price ?? '0'
-    if (price !== '0' && price !== '') {
-      res.status(403).json({ error: 'Paid skills require escrow-based download. Use purchase-info endpoint.' })
-      return
-    }
-
-    const escrow = db.getAvailableEscrowForSkill(req.params.id)
-    if (escrow) {
-      res.status(403).json({ error: 'Skill has active escrow. Use purchase-info endpoint.' })
-      return
-    }
-
-    // encryptedDataRef holds the Swarm reference (unencrypted for free packs)
-    const swarmRef = skill.encrypted_data_ref
-    if (!swarmRef) {
-      res.status(404).json({ error: 'No content reference available for this skill' })
-      return
-    }
-
-    const swarmUrl = process.env.SWARM_GATEWAY_URL || 'https://bee.fairdrop.xyz'
-    res.redirect(`${swarmUrl}/bytes/${swarmRef}`)
-  })
+  // GET /skills/:id/download — unified download (free redirect / x402 paywall / escrow deny)
+  router.get('/:id/download', downloadRateLimit, x402DownloadHandler(db))
 
   return router
 }
