@@ -8,6 +8,7 @@ import { loadConfig } from './config.js'
 import { AgentsDatabase } from './db/database.js'
 import { EscrowIndexer } from './indexer/escrow-indexer.js'
 import { createServer } from './api/server.js'
+import { seedProductTypes } from './db/seed-product-types.js'
 
 const config = loadConfig()
 
@@ -53,6 +54,8 @@ if (process.env.PAYMENT_PROXY_ADDRESS) {
     throw new Error('[x402] FATAL: RELAYER_KEY must be a 64-hex-char private key (with optional 0x prefix)')
   }
 }
+
+seedProductTypes(db)
 
 const app = createServer(db, indexer)
 

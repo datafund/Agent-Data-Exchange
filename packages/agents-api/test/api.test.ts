@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { AgentsDatabase } from '../src/db/database.js'
+import { seedProductTypes } from '../src/db/seed-product-types.js'
 import { EscrowIndexer } from '../src/indexer/escrow-indexer.js'
 import { createServer } from '../src/api/server.js'
 import { mkdtempSync, rmSync } from 'fs'
@@ -20,6 +21,7 @@ describe('API routes', () => {
   beforeAll(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'agents-api-test-'))
     db = new AgentsDatabase(join(tmpDir, 'test.db'))
+    seedProductTypes(db)
 
     // Create a mock indexer
     const indexer = {
@@ -171,21 +173,21 @@ describe('API routes', () => {
 
     it('POST /product-types with valid signature returns 201', async () => {
       const res = await signedRequest('/api/v1/product-types', {
-        id: 'engram-pack',
-        name: 'Engram Pack',
+        id: 'test-type',
+        name: 'Test Type',
         description: 'Datacore engram pack',
         schema: testSchema,
         content_format: 'json',
         free_download_allowed: 1,
       })
       expect(res.status).toBe(201)
-      expect(res.body.id).toBe('engram-pack')
-      expect(res.body.name).toBe('Engram Pack')
+      expect(res.body.id).toBe('test-type')
+      expect(res.body.name).toBe('Test Type')
     })
 
     it('POST /product-types with duplicate id returns 409', async () => {
       const res = await signedRequest('/api/v1/product-types', {
-        id: 'engram-pack',
+        id: 'test-type',
         name: 'Duplicate',
         schema: testSchema,
       })
@@ -203,9 +205,9 @@ describe('API routes', () => {
     })
 
     it('GET /product-types/:id returns type with parsed schema', async () => {
-      const res = await request('/api/v1/product-types/engram-pack')
+      const res = await request('/api/v1/product-types/test-type')
       expect(res.status).toBe(200)
-      expect(res.body.id).toBe('engram-pack')
+      expect(res.body.id).toBe('test-type')
       expect(res.body.schema.type).toBe('object')
       expect(res.body.schema.required).toContain('version')
     })
@@ -213,6 +215,30 @@ describe('API routes', () => {
     it('GET /product-types/:id returns 404 for unknown type', async () => {
       const res = await request('/api/v1/product-types/nonexistent')
       expect(res.status).toBe(404)
+    })
+  })
+
+  // === Seeded engram-pack tests ===
+
+  describe('engram-pack product type (seeded)', () => {
+    it('GET /product-types/engram-pack returns seeded type', async () => {
+      const { status, body } = await request('/api/v1/product-types/engram-pack')
+      expect(status).toBe(200)
+      expect(body.id).toBe('engram-pack')
+      expect(body.schema.required).toContain('engram_count')
+      expect(body.content_format).toBe('tar.gz')
+    })
+
+    it('validates metadata on skill creation', async () => {
+      const { status } = await signedRequest('/api/v1/skills', {
+        seller: testAccount.address,
+        title: 'Valid Pack',
+        price: '500000',
+        payment_method: 'x402',
+        product_type: 'engram-pack',
+        metadata: { engram_count: 50, domain: 'software.testing', version: '1.0.0' },
+      })
+      expect(status).toBe(201)
     })
   })
 
@@ -239,7 +265,7 @@ describe('API routes', () => {
         category: 'dataset',
         price: '0',
         product_type: 'engram-pack',
-        metadata: { version: '1.0.0', engram_count: 42 },
+        metadata: { version: '1.0.0', engram_count: 42, domain: 'test' },
       })
       expect(res.status).toBe(201)
       expect(res.body.product_type).toBe('engram-pack')
@@ -304,7 +330,7 @@ describe('API routes', () => {
         price: '0',
         encryptedDataRef: 'a'.repeat(64),
         product_type: 'engram-pack',
-        metadata: { version: '0.1.0' },
+        metadata: { version: '0.1.0', engram_count: 5, domain: 'test' },
       })
       expect(createRes.status).toBe(201)
       const skillId = createRes.body.id
