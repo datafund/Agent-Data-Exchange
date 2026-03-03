@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express'
 import type { AgentsDatabase } from '../../db/database.js'
 import * as crypto from 'crypto'
-import { type Chain, type PublicClient, type WalletClient, type Hex, keccak256, toBytes, createPublicClient, createWalletClient, http } from 'viem'
+import { type Chain, type PublicClient, type WalletClient, type Hex, keccak256, toBytes, createPublicClient, createWalletClient, http, verifyTypedData } from 'viem'
 import { base, baseSepolia } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
 
@@ -106,9 +106,39 @@ const RELAYER_KEY = process.env.RELAYER_KEY || ''
 const CONTENT_KEY_SECRET = process.env.X402_CONTENT_KEY_SECRET || ''
 const SWARM_GATEWAY = process.env.SWARM_GATEWAY_URL || 'https://bee.fairdrop.xyz'
 
-// === Facilitator client ===
+// === Settlement ===
 
-// x402.org facilitator v2 has a bug for EVM chains — use v1 format instead.
+// EIP-3009 TransferWithAuthorization ABI (USDC)
+const TRANSFER_WITH_AUTHORIZATION_ABI = [{
+  name: 'transferWithAuthorization',
+  type: 'function',
+  stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'from', type: 'address' },
+    { name: 'to', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'validAfter', type: 'uint256' },
+    { name: 'validBefore', type: 'uint256' },
+    { name: 'nonce', type: 'bytes32' },
+    { name: 'v', type: 'uint8' },
+    { name: 'r', type: 'bytes32' },
+    { name: 's', type: 'bytes32' },
+  ],
+  outputs: [],
+}] as const
+
+const TRANSFER_WITH_AUTHORIZATION_TYPES = {
+  TransferWithAuthorization: [
+    { name: 'from', type: 'address' },
+    { name: 'to', type: 'address' },
+    { name: 'value', type: 'uint256' },
+    { name: 'validAfter', type: 'uint256' },
+    { name: 'validBefore', type: 'uint256' },
+    { name: 'nonce', type: 'bytes32' },
+  ],
+} as const
+
+// x402.org facilitator v2 has a bug for EVM chains — use v1 for Sepolia.
 // v1 uses plain network names; v2 uses CAIP-2 (eip155:CHAIN_ID).
 const V1_NETWORK_NAMES: Record<string, string> = {
   'eip155:8453':  'base',
@@ -123,63 +153,153 @@ interface SettlementResult {
   error?: string
 }
 
+function decodePaymentPayload(paymentHeader: string): { payload: any } | { error: string } {
+  try {
+    return { payload: JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8')) }
+  } catch {
+    return { error: 'Invalid payment header: not valid base64 JSON' }
+  }
+}
+
+// Self-settlement: verify signature + call transferWithAuthorization directly.
+// Used when RELAYER_KEY is set (production). Eliminates external facilitator dependency.
+async function selfSettle(
+  paymentPayload: any,
+  expectedAmount: string
+): Promise<SettlementResult> {
+  const auth = paymentPayload?.payload?.authorization
+  const sig = paymentPayload?.payload?.signature as Hex | undefined
+  if (!auth || !sig) {
+    return { success: false, error: 'Payment payload missing authorization or signature' }
+  }
+
+  // Verify EIP-712 signature
+  const domain = {
+    name: networkConfig.usdcName,
+    version: '2' as const,
+    chainId: networkConfig.chain.id,
+    verifyingContract: networkConfig.usdc as Hex,
+  }
+  const message = {
+    from: auth.from as Hex,
+    to: auth.to as Hex,
+    value: BigInt(auth.value),
+    validAfter: BigInt(auth.validAfter),
+    validBefore: BigInt(auth.validBefore),
+    nonce: auth.nonce as Hex,
+  }
+
+  const valid = await verifyTypedData({
+    address: auth.from as Hex,
+    domain,
+    types: TRANSFER_WITH_AUTHORIZATION_TYPES,
+    primaryType: 'TransferWithAuthorization',
+    message,
+    signature: sig,
+  })
+  if (!valid) {
+    return { success: false, error: 'Invalid EIP-3009 signature' }
+  }
+
+  // Validate amount matches
+  if (auth.value !== expectedAmount) {
+    return { success: false, error: `Amount mismatch: signed ${auth.value}, expected ${expectedAmount}` }
+  }
+
+  // Submit transferWithAuthorization on-chain via relayer
+  const pub = createPublicClient({ chain: networkConfig.chain, transport: http() })
+  const account = privateKeyToAccount(RELAYER_KEY as `0x${string}`)
+  const wallet = createWalletClient({ chain: networkConfig.chain, transport: http(), account })
+
+  // Split signature into v, r, s
+  const r = ('0x' + sig.slice(2, 66)) as Hex
+  const s = ('0x' + sig.slice(66, 130)) as Hex
+  const v = parseInt(sig.slice(130, 132), 16)
+
+  try {
+    const { request } = await pub.simulateContract({
+      address: networkConfig.usdc as Hex,
+      abi: TRANSFER_WITH_AUTHORIZATION_ABI,
+      functionName: 'transferWithAuthorization',
+      args: [
+        auth.from as Hex, auth.to as Hex,
+        BigInt(auth.value), BigInt(auth.validAfter), BigInt(auth.validBefore),
+        auth.nonce as Hex,
+        v, r, s,
+      ],
+      account,
+    })
+    const txHash = await wallet.writeContract(request)
+    console.error(`[x402] Self-settled: ${auth.from} → ${auth.to} ${auth.value} USDC, tx: ${txHash}`)
+    return { success: true, txHash, buyerAddress: auth.from, settledAmount: auth.value }
+  } catch (err) {
+    return { success: false, error: `On-chain settlement failed: ${(err as Error).message}` }
+  }
+}
+
+// External facilitator settlement (x402.org — testnet only).
+async function facilitatorSettle(
+  paymentPayload: any,
+  paymentHeader: string,
+  paymentRequirements: Record<string, unknown>,
+  expectedAmount: string
+): Promise<SettlementResult> {
+  // Rewrite to v1 format (x402.org v2 has a bug for EVM chains)
+  const v1Network = V1_NETWORK_NAMES[X402_NETWORK] || X402_NETWORK
+  const v1Payload = { ...paymentPayload, x402Version: 1, network: v1Network }
+
+  const res = await fetch(`${FACILITATOR_URL}/settle`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      paymentPayload: v1Payload,
+      paymentRequirements: {
+        ...paymentRequirements,
+        network: v1Network,
+        extra: { name: networkConfig.usdcName, version: '2' },
+      },
+    }),
+  })
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '')
+    return { success: false, error: `Facilitator: ${res.status} ${errBody}` }
+  }
+  const data = await res.json() as any
+
+  if (!data.success) {
+    return { success: false, error: data.errorMessage || data.errorReason || 'Facilitator rejected payment' }
+  }
+
+  const txHash = data.transaction
+  const buyerAddress = data.payer
+  const settledAmount = paymentPayload?.payload?.authorization?.value || expectedAmount
+
+  if (!txHash || !/^0x[0-9a-f]{64}$/i.test(txHash)) {
+    return { success: false, error: `Invalid transaction hash from facilitator: ${txHash}` }
+  }
+  if (!buyerAddress) {
+    return { success: false, error: 'No payer address from facilitator' }
+  }
+
+  return { success: true, txHash, buyerAddress, settledAmount }
+}
+
 async function verifyAndSettle(
   paymentHeader: string,
   paymentRequirements: Record<string, unknown>,
   expectedAmount: string
 ): Promise<SettlementResult> {
   try {
-    // Decode the base64-encoded payment payload from the X-Payment header
-    let paymentPayload: any
-    try {
-      paymentPayload = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8'))
-    } catch {
-      return { success: false, error: 'Invalid payment header: not valid base64 JSON' }
+    const decoded = decodePaymentPayload(paymentHeader)
+    if ('error' in decoded) return { success: false, error: decoded.error }
+    const paymentPayload = decoded.payload
+
+    // Self-settle when RELAYER_KEY is available (production).
+    // Falls back to external facilitator (testnet / x402.org).
+    if (RELAYER_KEY) {
+      return selfSettle(paymentPayload, expectedAmount)
     }
-
-    // The x402.org facilitator reads x402Version from inside paymentPayload.
-    // v2 has a bug for EVM chains, so rewrite to v1 format:
-    // - x402Version: 1 (inside paymentPayload)
-    // - network: plain name (e.g. "base-sepolia" not "eip155:84532")
-    // - paymentRequirements.extra must include EIP-712 domain {name, version}
-    const v1Network = V1_NETWORK_NAMES[X402_NETWORK] || X402_NETWORK
-    const v1Payload = { ...paymentPayload, x402Version: 1, network: v1Network }
-
-    const res = await fetch(`${FACILITATOR_URL}/settle`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        paymentPayload: v1Payload,
-        paymentRequirements: {
-          ...paymentRequirements,
-          network: v1Network,
-          extra: { name: networkConfig.usdcName, version: '2' },
-        },
-      }),
-    })
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '')
-      return { success: false, error: `Facilitator: ${res.status} ${errBody}` }
-    }
-    const data = await res.json() as any
-
-    if (!data.success) {
-      return { success: false, error: data.errorMessage || data.errorReason || 'Facilitator rejected payment' }
-    }
-
-    const txHash = data.transaction
-    const buyerAddress = data.payer
-    // The facilitator doesn't return the amount directly — trust the signed authorization
-    const settledAmount = paymentPayload?.payload?.authorization?.value || expectedAmount
-
-    if (!txHash || !/^0x[0-9a-f]{64}$/i.test(txHash)) {
-      return { success: false, error: `Invalid transaction hash from facilitator: ${txHash}` }
-    }
-    if (!buyerAddress) {
-      return { success: false, error: 'No payer address from facilitator' }
-    }
-
-    return { success: true, txHash, buyerAddress, settledAmount }
+    return facilitatorSettle(paymentPayload, paymentHeader, paymentRequirements, expectedAmount)
   } catch (err) {
     return { success: false, error: (err as Error).message }
   }
