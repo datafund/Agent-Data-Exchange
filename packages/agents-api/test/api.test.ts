@@ -403,16 +403,17 @@ describe('API routes', () => {
         txHash,
         settledAt: Math.floor(Date.now() / 1000),
       })
-      expect(() => db.recordX402Payment({
+      const result = db.recordX402Payment({
         id: 'pay-dup-2',
         skillId: testSkillId,
         buyerAddress: '0x' + '1'.repeat(40),
         sellerAddress: '0x' + '2'.repeat(40),
         amount: '500000',
         fee: '0',
-        txHash,
+        txHash, // same hash — must fail
         settledAt: Math.floor(Date.now() / 1000),
-      })).toThrow()
+      })
+      expect(result).toBe(false)
     })
 
     it('never exposes x402_content_key in API responses', async () => {
@@ -434,6 +435,8 @@ describe('API routes', () => {
       })
       const row = db.getSkill('skill-key-encrypt-test')
       expect(row).toBeTruthy()
+      expect(row!.x402_content_key).not.toBe(rawKey)
+      expect(row!.x402_content_key).not.toBeNull()
     })
   })
 })

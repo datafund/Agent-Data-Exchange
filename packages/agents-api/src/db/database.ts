@@ -673,14 +673,15 @@ export class AgentsDatabase {
     x402ContentKey?: string
     createdAt: number
   }): boolean {
-    try {
-      let encryptedKey: string | null = null
-      if (skill.x402ContentKey) {
-        const secret = process.env.X402_CONTENT_KEY_SECRET
-        if (!secret) throw new Error('X402_CONTENT_KEY_SECRET not set')
-        encryptedKey = encryptContentKey(skill.x402ContentKey, secret)
-      }
+    // Encryption config errors must fail loudly (not silently swallowed by catch below)
+    let encryptedKey: string | null = null
+    if (skill.x402ContentKey) {
+      const secret = process.env.X402_CONTENT_KEY_SECRET
+      if (!secret) throw new Error('X402_CONTENT_KEY_SECRET not set')
+      encryptedKey = encryptContentKey(skill.x402ContentKey, secret)
+    }
 
+    try {
       this.db.prepare(
         `INSERT INTO skills (id, seller, seller_agent_id, title, description, long_description, category, price, price_token, tags, delivery, content_hash, encrypted_data_ref, product_type, metadata, payment_method, x402_content_key, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -829,15 +830,19 @@ export class AgentsDatabase {
     txHash: string
     settledAt: number
   }): boolean {
-    this.db.prepare(
-      `INSERT INTO x402_payments (id, skill_id, buyer_address, seller_address, amount, fee, tx_hash, settled_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      payment.id, payment.skillId, payment.buyerAddress.toLowerCase(),
-      payment.sellerAddress.toLowerCase(), payment.amount, payment.fee,
-      payment.txHash, payment.settledAt,
-    )
-    return true
+    try {
+      this.db.prepare(
+        `INSERT INTO x402_payments (id, skill_id, buyer_address, seller_address, amount, fee, tx_hash, settled_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        payment.id, payment.skillId, payment.buyerAddress.toLowerCase(),
+        payment.sellerAddress.toLowerCase(), payment.amount, payment.fee,
+        payment.txHash, payment.settledAt,
+      )
+      return true
+    } catch {
+      return false
+    }
   }
 
   listX402Payments(skillId: string): any[] {
