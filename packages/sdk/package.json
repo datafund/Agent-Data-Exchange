@@ -9,7 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@fairdrop/contracts": "workspace:*",
+    "@ade/contracts": "workspace:*",
     "@fairdrop/discovery": "workspace:*",
     "ethers": "^6.13.0"
   },

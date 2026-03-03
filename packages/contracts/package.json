@@ -1,5 +1,5 @@
 {
-  "name": "@fairdrop/contracts",
+  "name": "@ade/contracts",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",

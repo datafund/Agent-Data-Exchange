@@ -7,7 +7,7 @@
  */
 
 import { ethers } from 'ethers';
-import { DataEscrow } from '@fairdrop/contracts';
+import { DataEscrow } from '@ade/contracts';
 import { sanitize, type SanitizedOffering } from '../sanitize.js';
 
 export interface OnChainSearchParams {
