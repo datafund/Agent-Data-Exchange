@@ -166,7 +166,7 @@ export function skillRoutes(db: AgentsDatabase): Router {
 
   // GET /skills/x402-payments — list x402 payments for authenticated seller
   router.get('/x402-payments', verifySignature, (req, res) => {
-    const limit = parseInt(req.query.limit as string) || 20
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100)
     const address = (req as any).verifiedAddress
     if (!address) {
       res.status(401).json({ error: 'Signature authentication required' })
