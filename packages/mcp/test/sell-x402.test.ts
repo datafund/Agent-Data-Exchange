@@ -142,7 +142,8 @@ describe('df_sell with payment_method: x402', () => {
       expect(result).not.toHaveProperty('escrowId')
       expect(result).not.toHaveProperty('txHash')
       expect(result).not.toHaveProperty('encryptionKey')
-      expect(result).not.toHaveProperty('keyBackupFile')
+      // x402 flow has its own key backup (not escrow key backup)
+      expect(result).toHaveProperty('keyBackupFile')
 
       // Verify Swarm upload was called
       expect(mockCallRemoteTool).toHaveBeenCalledWith('fairdrop_upload_bytes', {

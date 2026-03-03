@@ -440,17 +440,42 @@ async function executeX402Sell(args: {
     )
   }
 
-  const marketplaceResult = await pubResponse.json()
+  const marketplaceResult = await pubResponse.json() as { id?: string }
+
+  // Backup content key locally (matches escrow key backup pattern)
+  let keyBackupFile: string | null = null
+  try {
+    const keysDir = path.join(
+      process.env.HOME || process.env.USERPROFILE || '.',
+      '.datafund', 'x402-keys'
+    )
+    fs.mkdirSync(keysDir, { recursive: true, mode: 0o700 })
+    const skillId = marketplaceResult.id || uploadResult.reference
+    keyBackupFile = path.join(keysDir, `x402-${skillId}.json`)
+    fs.writeFileSync(keyBackupFile, JSON.stringify({
+      skillId,
+      contentKey: keyHex,
+      encryptedDataRef: uploadResult.reference,
+      contentHash,
+      seller: address,
+      createdAt: new Date().toISOString(),
+    }, null, 2), { mode: 0o600 })
+  } catch (err) {
+    keyBackupFile = `FAILED: ${err instanceof Error ? err.message : String(err)}`
+  }
 
   return {
     success: true,
     payment_method: 'x402',
     contentHash,
     encryptedDataRef: uploadResult.reference,
+    keyBackupFile,
     marketplace: marketplaceResult,
     next_steps: [
       'Skill is now listed with x402 instant payment',
       'Buyers pay via HTTP 402 micropayment — no escrow needed',
+      'Note: the marketplace server holds the decryption key for serving content',
+      `Content key backed up to ${keyBackupFile}`,
       'Use df_skill_details to check listing status',
     ],
   }
