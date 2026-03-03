@@ -295,6 +295,13 @@ export function x402DownloadHandler(db: AgentsDatabase) {
       // Invalid tx_hash — fall through to normal payment flow
     }
 
+    // Validate content exists BEFORE accepting payment — don't take money for undeliverable content
+    const swarmRef = skill.encrypted_data_ref
+    if (!swarmRef || !isValidSwarmRef(swarmRef)) {
+      res.status(404).json({ error: 'Skill has no downloadable content' })
+      return
+    }
+
     const paymentHeader = (req.headers['x-payment'] || req.headers['payment-signature']) as string
 
     if (!paymentHeader) {
@@ -342,13 +349,7 @@ export function x402DownloadHandler(db: AgentsDatabase) {
     forwardPaymentToSeller(db, skill.seller, price, req.params.id, paymentId)
       .catch(err => console.error(`[x402] Forward failed for payment ${paymentId}:`, err.message))
 
-    // Fetch and decrypt content
-    const swarmRef = skill.encrypted_data_ref
-    if (!swarmRef) {
-      res.status(404).json({ error: 'No content reference' })
-      return
-    }
-
+    // Fetch and decrypt content (swarmRef already validated above)
     try {
       const result = await fetchAndDecryptContent(swarmRef, skill.x402_content_key, CONTENT_KEY_SECRET)
       if ('error' in result) {
