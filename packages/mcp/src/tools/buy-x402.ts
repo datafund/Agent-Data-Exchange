@@ -12,9 +12,9 @@
  */
 
 import { writeFileSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { dirname, resolve } from 'path'
 import { privateKeyToAccount } from 'viem/accounts'
-import type { Hex } from 'viem'
+import { isAddress, type Hex } from 'viem'
 import { session } from '../session.js'
 
 // --- Inlined helpers (from SDK, keep MCP self-contained) ---
@@ -30,16 +30,17 @@ function formatUsdc(smallestUnits: string): string {
   return `$${whole}.${display}`
 }
 
-// USDC contract on Base (EIP-3009 compatible)
-const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+// USDC contract addresses by network
+const NETWORK_CONFIG: Record<string, { chainId: number; usdcAddress: Hex }> = {
+  'eip155:8453': { chainId: 8453, usdcAddress: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
+  'eip155:84532': { chainId: 84532, usdcAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
+}
 
-// EIP-712 domain for USDC on Base
-const USDC_EIP712_DOMAIN = {
-  name: 'USD Coin',
-  version: '2',
-  chainId: 8453,
-  verifyingContract: USDC_BASE as Hex,
-} as const
+function getNetworkConfig(network: string): { chainId: number; usdcAddress: Hex } {
+  const config = NETWORK_CONFIG[network]
+  if (!config) throw new Error(`Unsupported network: ${network}. Supported: ${Object.keys(NETWORK_CONFIG).join(', ')}`)
+  return config
+}
 
 // EIP-3009 TransferWithAuthorization types
 const TRANSFER_WITH_AUTHORIZATION_TYPES = {
@@ -129,7 +130,9 @@ export const buyX402Tool = {
     if (args.tx_hash) {
       const address = session.requireAddress()
 
-      const response = await fetch(`${downloadUrl}?tx_hash=${args.tx_hash}`, {
+      const redownloadUrl = new URL(downloadUrl)
+      redownloadUrl.searchParams.set('tx_hash', args.tx_hash)
+      const response = await fetch(redownloadUrl.toString(), {
         headers: {
           'X-Buyer-Address': address,
         },
@@ -144,13 +147,14 @@ export const buyX402Tool = {
       }
 
       const content = Buffer.from(await response.arrayBuffer())
-      mkdirSync(dirname(args.output_path), { recursive: true })
-      writeFileSync(args.output_path, content)
+      const resolvedPath = resolve(args.output_path)
+      mkdirSync(dirname(resolvedPath), { recursive: true })
+      writeFileSync(resolvedPath, content)
 
       return {
         success: true,
         skill_id: args.skill_id,
-        output_path: args.output_path,
+        output_path: resolvedPath,
         size_bytes: content.length,
         tx_hash: args.tx_hash,
         payment_amount: '0',
@@ -193,12 +197,13 @@ export const buyX402Tool = {
       if (initialRes.ok) {
         // Free content returned directly — unexpected for x402 skill
         const content = Buffer.from(await initialRes.arrayBuffer())
-        mkdirSync(dirname(args.output_path), { recursive: true })
-        writeFileSync(args.output_path, content)
+        const resolvedPath = resolve(args.output_path)
+        mkdirSync(dirname(resolvedPath), { recursive: true })
+        writeFileSync(resolvedPath, content)
         return {
           success: true,
           skill_id: args.skill_id,
-          output_path: args.output_path,
+          output_path: resolvedPath,
           size_bytes: content.length,
           tx_hash: '',
           payment_amount: '0',
@@ -223,9 +228,10 @@ export const buyX402Tool = {
       )
     }
 
-    // Find an "exact" scheme requirement for Base
+    // Find an "exact" scheme requirement for a supported network
+    const supportedNetworks = Object.keys(NETWORK_CONFIG)
     const req = requirements.find(r =>
-      r.scheme === 'exact' && (r.network === 'eip155:8453' || r.network === 'eip155:84532')
+      r.scheme === 'exact' && supportedNetworks.includes(r.network)
     ) || requirements[0]
 
     const paymentAmount = req.maxAmountRequired || req.amount || skill.price || '0'
@@ -234,6 +240,12 @@ export const buyX402Tool = {
     if (!payTo) {
       throw new Error('Payment requirement missing payTo address')
     }
+    if (!isAddress(payTo)) {
+      throw new Error(`Invalid payTo address from server: "${payTo}"`)
+    }
+
+    // Resolve chain-specific config (chainId + USDC address)
+    const networkConfig = getNetworkConfig(req.network)
 
     // Step 3: Sign EIP-3009 transferWithAuthorization
     const account = privateKeyToAccount(normalizedKey)
@@ -250,7 +262,12 @@ export const buyX402Tool = {
     }
 
     const signature = await account.signTypedData({
-      domain: USDC_EIP712_DOMAIN,
+      domain: {
+        name: 'USD Coin',
+        version: '2',
+        chainId: networkConfig.chainId,
+        verifyingContract: networkConfig.usdcAddress,
+      },
       types: TRANSFER_WITH_AUTHORIZATION_TYPES,
       primaryType: 'TransferWithAuthorization',
       message: authorization,
@@ -301,8 +318,9 @@ export const buyX402Tool = {
 
     // Step 6: Save content
     const content = Buffer.from(await paidRes.arrayBuffer())
-    mkdirSync(dirname(args.output_path), { recursive: true })
-    writeFileSync(args.output_path, content)
+    const resolvedPath = resolve(args.output_path)
+    mkdirSync(dirname(resolvedPath), { recursive: true })
+    writeFileSync(resolvedPath, content)
 
     // Extract tx hash from response header
     const txHash = paidRes.headers.get('X-Payment-TxHash') || ''
@@ -310,13 +328,13 @@ export const buyX402Tool = {
     return {
       success: true,
       skill_id: args.skill_id,
-      output_path: args.output_path,
+      output_path: resolvedPath,
       size_bytes: content.length,
       tx_hash: txHash,
       payment_amount: paymentAmount,
       payment_amount_formatted: formatUsdc(paymentAmount),
       next_steps: [
-        `Content saved to ${args.output_path} (${content.length} bytes)`,
+        `Content saved to ${resolvedPath} (${content.length} bytes)`,
         txHash ? `Transaction: ${txHash}` : 'Check marketplace for transaction details',
         `Re-download anytime with: df_buy_x402 skill_id="${args.skill_id}" tx_hash="${txHash}" output_path="..."`,
       ],
