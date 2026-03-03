@@ -6,9 +6,9 @@
  */
 
 import { ethers, JsonRpcProvider } from 'ethers';
-import { ERC8004 } from '@fairdrop/contracts';
+import { ERC8004 } from '@ade/contracts';
 import { sanitize, type SanitizedOffering } from '../sanitize.js';
-import { ADDRESSES } from '@fairdrop/contracts';
+import { ADDRESSES } from '@ade/contracts';
 
 export class ERC8004Channel {
   private erc8004: ERC8004;

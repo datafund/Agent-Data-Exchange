@@ -2,6 +2,7 @@ import { createPublicClient, http, formatEther, decodeEventLog, keccak256 } from
 import { base } from 'viem/chains'
 import * as fs from 'fs'
 import * as path from 'path'
+import * as crypto from 'crypto'
 import { session } from '../session.js'
 import { callRemoteTool } from '../proxy.js'
 import { verifyTransaction, type UnsignedTx } from '../tx-verify.js'
@@ -32,7 +33,7 @@ const ESCROW_CREATED_EVENT = {
 
 export const sellTool = {
   name: 'df_sell',
-  description: 'Composite: Upload content → create escrow → sign → submit → publish to marketplace. Single call to list content for sale.',
+  description: 'Composite: Upload content and list for sale. Supports escrow (on-chain, default) or x402 (instant USDC micropayment).',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -46,7 +47,7 @@ export const sellTool = {
       },
       price_wei: {
         type: 'string',
-        description: 'Price in wei',
+        description: 'Price in wei (escrow) or USDC smallest units (x402, e.g. "1000000" for $1.00)',
       },
       name: {
         type: 'string',
@@ -62,12 +63,16 @@ export const sellTool = {
       },
       expiry_days: {
         type: 'number',
-        description: 'Escrow expiry in days (default: 7)',
+        description: 'Escrow expiry in days (default: 7). Ignored for x402.',
       },
       tags: {
         type: 'array',
         items: { type: 'string' },
         description: 'Tags for marketplace discovery',
+      },
+      payment_method: {
+        type: 'string',
+        description: 'Payment method: "escrow" (default, on-chain) or "x402" (instant USDC micropayment)',
       },
     },
     required: ['price_wei', 'name', 'description', 'category'],
@@ -81,7 +86,14 @@ export const sellTool = {
     category: string
     expiry_days?: number
     tags?: string[]
+    payment_method?: string
   }) {
+    // Route to x402 flow if specified
+    if (args.payment_method === 'x402') {
+      return executeX402Sell(args)
+    }
+
+    // Default: escrow flow (existing behavior)
     const privateKey = session.requirePrivateKey()
     const address = session.requireAddress()
 
@@ -277,26 +289,29 @@ export const sellTool = {
       keyFilePath = `FAILED: ${err instanceof Error ? err.message : String(err)}`
     }
 
-    // Step 7: Publish to marketplace
+    // Step 7: Publish to marketplace (signed)
     let marketplaceResult: unknown = null
     let marketplaceError: string | null = null
     try {
+      const { signRequest } = await import('../signing.js')
       const MARKETPLACE_URL = process.env.MARKETPLACE_URL || 'https://agents.datafund.io'
+      const pubBody: Record<string, unknown> = {
+        seller: address,
+        title: args.name,
+        description: args.description,
+        category: args.category,
+        price: args.price_wei,
+        priceToken: 'ETH',
+        escrowId: parseInt(escrowId, 10),
+        contentHash: prepareResult.contentHash,
+        encryptedDataRef: prepareResult.encryptedDataRef,
+        tags: args.tags || [],
+      }
+      const headers = signRequest(pubBody, privateKey)
       const pubResponse = await fetch(`${MARKETPLACE_URL}/api/v1/skills`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          seller: address,
-          title: args.name,
-          description: args.description,
-          category: args.category,
-          price: args.price_wei,
-          priceToken: 'ETH',
-          escrowId: parseInt(escrowId, 10),
-          contentHash: prepareResult.contentHash,
-          encryptedDataRef: prepareResult.encryptedDataRef,
-          tags: args.tags || [],
-        }),
+        headers,
+        body: JSON.stringify(pubBody),
       })
       if (pubResponse.ok) {
         marketplaceResult = await pubResponse.json()
@@ -327,6 +342,143 @@ export const sellTool = {
       ],
     }
   },
+}
+
+/**
+ * x402 sell flow: encrypt content locally, upload to Swarm, publish to marketplace.
+ * No escrow, no on-chain transaction. The marketplace server stores the content key
+ * and serves content via HTTP 402 micropayments.
+ */
+async function executeX402Sell(args: {
+  content_base64?: string
+  file_path?: string
+  price_wei: string
+  name: string
+  description: string
+  category: string
+  tags?: string[]
+}) {
+  const privateKey = session.requirePrivateKey()
+  const address = session.requireAddress()
+
+  // Step 1: Read content
+  let content: Buffer
+  if (args.content_base64) {
+    content = Buffer.from(args.content_base64, 'base64')
+  } else if (args.file_path) {
+    content = fs.readFileSync(args.file_path)
+  } else {
+    throw new Error('Provide content_base64 or file_path')
+  }
+
+  if (content.length === 0) {
+    throw new Error('Content is empty — nothing to sell')
+  }
+
+  // Step 2: Encrypt with AES-256-GCM (same format as escrow flow)
+  const key = crypto.randomBytes(32)
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
+  const ct = Buffer.concat([cipher.update(content), cipher.final()])
+  const tag = cipher.getAuthTag()
+  // Format: IV(12) + authTag(16) + ciphertext
+  const encrypted = Buffer.concat([iv, tag, ct])
+  const keyHex = key.toString('hex')
+
+  // Step 3: Upload encrypted content to Swarm
+  const uploadResult = await callRemoteTool('fairdrop_upload_bytes', {
+    data_base64: encrypted.toString('base64'),
+  }) as { reference: string }
+
+  if (!uploadResult.reference) {
+    throw new Error(
+      'Swarm upload did not return a reference. Check the Bee node connection and postage stamp balance.'
+    )
+  }
+
+  // Step 4: Compute content hash (keccak256 of encrypted content)
+  const contentHash = keccak256(new Uint8Array(encrypted))
+
+  // Step 5: Verify upload is retrievable
+  const verified = await verifySwarmUpload(uploadResult.reference, contentHash)
+  if (!verified) {
+    throw new Error(
+      `Swarm upload verification failed. The encrypted content (ref: ${uploadResult.reference}) could not be downloaded back. ` +
+      'Check postage stamp balance and Bee node connectivity.'
+    )
+  }
+
+  // Step 6: Publish to marketplace with x402 payment method
+  const { signRequest } = await import('../signing.js')
+  const MARKETPLACE_URL = process.env.MARKETPLACE_URL || 'https://agents.datafund.io'
+
+  const pubBody: Record<string, unknown> = {
+    seller: address,
+    title: args.name,
+    description: args.description,
+    category: args.category,
+    price: args.price_wei,
+    priceToken: 'USDC',
+    tags: args.tags || [],
+    contentHash,
+    encryptedDataRef: uploadResult.reference,
+    payment_method: 'x402',
+    x402_content_key: keyHex,
+  }
+
+  const headers = signRequest(pubBody, privateKey)
+  const pubResponse = await fetch(`${MARKETPLACE_URL}/api/v1/skills`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(pubBody),
+  })
+
+  if (!pubResponse.ok) {
+    const errorBody = await pubResponse.text()
+    throw new Error(
+      `Marketplace publish failed (${pubResponse.status}): ${errorBody}`
+    )
+  }
+
+  const marketplaceResult = await pubResponse.json() as { id?: string }
+
+  // Backup content key locally (matches escrow key backup pattern)
+  let keyBackupFile: string | null = null
+  try {
+    const keysDir = path.join(
+      process.env.HOME || process.env.USERPROFILE || '.',
+      '.datafund', 'x402-keys'
+    )
+    fs.mkdirSync(keysDir, { recursive: true, mode: 0o700 })
+    const skillId = marketplaceResult.id || uploadResult.reference
+    keyBackupFile = path.join(keysDir, `x402-${skillId}.json`)
+    fs.writeFileSync(keyBackupFile, JSON.stringify({
+      skillId,
+      contentKey: keyHex,
+      encryptedDataRef: uploadResult.reference,
+      contentHash,
+      seller: address,
+      createdAt: new Date().toISOString(),
+    }, null, 2), { mode: 0o600 })
+  } catch (err) {
+    keyBackupFile = `FAILED: ${err instanceof Error ? err.message : String(err)}`
+  }
+
+  return {
+    success: true,
+    payment_method: 'x402',
+    contentHash,
+    encryptedDataRef: uploadResult.reference,
+    keyBackupFile,
+    marketplace: marketplaceResult,
+    next_steps: [
+      'Skill is now listed with x402 instant payment',
+      'Buyers pay via HTTP 402 micropayment — no escrow needed',
+      'Note: the marketplace server holds the decryption key for serving content',
+      `Content key backed up to ${keyBackupFile}`,
+      'Use df_skill_details to check listing status',
+    ],
+  }
 }
 
 /**

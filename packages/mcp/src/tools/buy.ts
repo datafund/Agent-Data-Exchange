@@ -34,25 +34,30 @@ export const buyTool = {
     const privateKey = session.requirePrivateKey()
     const address = session.requireAddress()
 
-    // Check balance — fail fast if account can't pay
-    const publicClient = createPublicClient({
-      chain: base,
-      transport: http(process.env.BASE_RPC_URL || 'https://mainnet.base.org'),
-    })
-    const balance = await publicClient.getBalance({ address: address as `0x${string}` })
-    if (balance === 0n) {
-      throw new Error(
-        `Account ${address} has zero ETH on Base. You need Base ETH to fund escrows. ` +
-        `Bridge ETH to Base via https://bridge.base.org or get testnet ETH from a faucet.`
-      )
-    }
-
     let escrowId = args.escrow_id
     let encryptedDataRef: string | undefined
 
-    // If skill_id provided, look up escrow details
+    // If skill_id provided, check payment method before expensive balance check
     if (!escrowId && args.skill_id) {
       const MARKETPLACE_URL = process.env.MARKETPLACE_URL || 'https://agents.datafund.io'
+
+      // First check if this is an x402 skill — redirect to df_buy_x402
+      const skillResponse = await fetch(
+        `${MARKETPLACE_URL}/api/v1/skills/${args.skill_id}`
+      )
+      if (skillResponse.ok) {
+        const skill = await skillResponse.json() as { payment_method?: string; title?: string }
+        if (skill.payment_method === 'x402') {
+          return {
+            success: false,
+            error: `Skill "${skill.title || args.skill_id}" uses x402 instant payment, not escrow. ` +
+              `Use df_buy_x402 instead: df_buy_x402 skill_id="${args.skill_id}" output_path="./downloaded-content"`,
+            payment_method: 'x402',
+            redirect_tool: 'df_buy_x402',
+          }
+        }
+      }
+
       const detailsResponse = await fetch(
         `${MARKETPLACE_URL}/api/v1/skills/${args.skill_id}/purchase-info`
       )
@@ -81,6 +86,19 @@ export const buyTool = {
 
     if (!escrowId) {
       throw new Error('Provide escrow_id or skill_id')
+    }
+
+    // Check balance — fail fast if account can't pay gas for escrow
+    const publicClient = createPublicClient({
+      chain: base,
+      transport: http(process.env.BASE_RPC_URL || 'https://mainnet.base.org'),
+    })
+    const balance = await publicClient.getBalance({ address: address as `0x${string}` })
+    if (balance === 0n) {
+      throw new Error(
+        `Account ${address} has zero ETH on Base. You need Base ETH to fund escrows. ` +
+        `Bridge ETH to Base via https://bridge.base.org or get testnet ETH from a faucet.`
+      )
     }
 
     // If we have escrow_id but no encryptedDataRef, try to look it up from the marketplace

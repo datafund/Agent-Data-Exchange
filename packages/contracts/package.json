@@ -1,5 +1,5 @@
 {
-  "name": "@fairdrop/contracts",
+  "name": "@ade/contracts",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/index.js",
@@ -9,7 +9,8 @@
     "test": "vitest"
   },
   "dependencies": {
-    "ethers": "^6.13.0"
+    "ethers": "^6.13.0",
+    "viem": "^2.46.3"
   },
   "devDependencies": {
     "typescript": "^5.5.0"

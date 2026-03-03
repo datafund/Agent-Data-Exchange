@@ -17,7 +17,7 @@
 
 import { webcrypto as crypto } from 'crypto';
 import { ethers, JsonRpcProvider } from 'ethers';
-import { DataEscrow, ERC8004, ADDRESSES, EscrowState } from '@fairdrop/contracts';
+import { DataEscrow, ERC8004, ADDRESSES, EscrowState } from '@ade/contracts';
 import { Discovery, type SearchResult, type SanitizedOffering } from '@fairdrop/discovery';
 import { Wallet } from './wallet.js';
 import { Stamps, type StampInfo } from './stamps.js';

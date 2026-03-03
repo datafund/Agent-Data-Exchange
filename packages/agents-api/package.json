@@ -15,6 +15,9 @@
     "build:cli": "tsc -p tsconfig.cli.json"
   },
   "dependencies": {
+    "@ade/contracts": "file:../contracts",
+    "@x402/core": "^2.5.0",
+    "ajv": "^8.18.0",
     "better-sqlite3": "^11.0.0",
     "commander": "^12.1.0",
     "cors": "^2.8.5",

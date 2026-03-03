@@ -36,9 +36,10 @@ export {
 // Composite workflows (5 tools)
 export { sellTool } from './sell.js'
 export { buyTool } from './buy.js'
+export { buyX402Tool } from './buy-x402.js'
 export { releaseKeyTool } from './release.js'
 export { claimTool } from './claim.js'
-export { downloadContentTool } from './download.js'
+export { downloadContentTool, downloadFreeTool } from './download.js'
 
 // Polling (2 tools)
 export { waitForStateTool, myEscrowsTool } from './polling.js'

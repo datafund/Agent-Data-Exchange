@@ -15,7 +15,7 @@ import { type SanitizedOffering } from './sanitize.js';
 import { OnChainChannel } from './channels/onchain.js';
 import { MoltbookChannel } from './channels/moltbook.js';
 import { ERC8004Channel } from './channels/erc8004.js';
-import { DataEscrow } from '@fairdrop/contracts';
+import { DataEscrow } from '@ade/contracts';
 
 export interface SearchParams {
   /** Free-text query (matched against title, description, tags) */
