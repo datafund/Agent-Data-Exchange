@@ -1,8 +1,8 @@
 import type { Request, Response } from 'express'
 import type { AgentsDatabase } from '../../db/database.js'
 import * as crypto from 'crypto'
-import { type PublicClient, type WalletClient, type Hex, keccak256, toBytes, createPublicClient, createWalletClient, http } from 'viem'
-import { base } from 'viem/chains'
+import { type Chain, type PublicClient, type WalletClient, type Hex, keccak256, toBytes, createPublicClient, createWalletClient, http } from 'viem'
+import { base, baseSepolia } from 'viem/chains'
 import { privateKeyToAccount } from 'viem/accounts'
 
 // --- Inlined from @fairdrop/agent-exchange-sdk/src/x402.ts — keep in sync ---
@@ -88,9 +88,14 @@ class PaymentProxyClient {
 
 // --- End inlined code ---
 
-// Constants
-const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
-const BASE_NETWORK = 'eip155:8453'
+// Network configuration — fail-fast if misconfigured
+const SUPPORTED_NETWORKS: Record<string, { chain: Chain; usdc: string }> = {
+  'eip155:8453':  { chain: base, usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
+  'eip155:84532': { chain: baseSepolia, usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
+}
+const X402_NETWORK = process.env.X402_NETWORK || 'eip155:8453'
+const networkConfig = SUPPORTED_NETWORKS[X402_NETWORK]
+if (!networkConfig) throw new Error(`[x402] Unsupported X402_NETWORK: ${X402_NETWORK}. Supported: ${Object.keys(SUPPORTED_NETWORKS).join(', ')}`)
 
 // === Configuration (validated at startup — see Task 4b Step 3) ===
 
@@ -149,12 +154,12 @@ function create402Response(skillId: string, price: string, seller: string, resou
     x402Version: 2,
     paymentRequirements: [{
       scheme: 'exact',
-      network: BASE_NETWORK,
+      network: X402_NETWORK,
       maxAmountRequired: price,
       resource,
       description: `Purchase skill: ${skillId}`,
       payTo: PAYMENT_PROXY,
-      asset: USDC_BASE,
+      asset: networkConfig.usdc,
       extra: { seller, skillId },
     }],
   }
@@ -167,9 +172,9 @@ let proxyClient: PaymentProxyClient | null = null
 function getProxyClient(): PaymentProxyClient | null {
   if (proxyClient) return proxyClient
   if (!PAYMENT_PROXY || !RELAYER_KEY) return null
-  const pub = createPublicClient({ chain: base, transport: http() })
+  const pub = createPublicClient({ chain: networkConfig.chain, transport: http() })
   const account = privateKeyToAccount(RELAYER_KEY as `0x${string}`)
-  const wallet = createWalletClient({ chain: base, transport: http(), account })
+  const wallet = createWalletClient({ chain: networkConfig.chain, transport: http(), account })
   proxyClient = new PaymentProxyClient(PAYMENT_PROXY as `0x${string}`, pub as PublicClient, wallet as WalletClient)
   return proxyClient
 }
@@ -186,7 +191,7 @@ async function forwardPaymentToSeller(
   }
   try {
     const txHash = await client.forward(
-      seller as `0x${string}`, USDC_BASE as `0x${string}`, BigInt(amount), skillId
+      seller as `0x${string}`, networkConfig.usdc as `0x${string}`, BigInt(amount), skillId
     )
     db.updatePendingForward(paymentId, 'completed', txHash)
     console.error(`[x402] Forwarded ${amount} USDC to ${seller}: ${txHash}`)
