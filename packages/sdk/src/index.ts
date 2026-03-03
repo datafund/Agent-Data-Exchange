@@ -10,3 +10,5 @@ export type { EscrowDetails, EscrowConfig, AgentProfile, ReputationSummary, Netw
 
 export { Discovery, sanitize } from '@fairdrop/discovery';
 export type { SearchResult, SearchParams, SanitizedOffering } from '@fairdrop/discovery';
+
+export * from './x402.js';
