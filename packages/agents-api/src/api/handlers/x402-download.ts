@@ -89,9 +89,10 @@ class PaymentProxyClient {
 // --- End inlined code ---
 
 // Network configuration — fail-fast if misconfigured
-const SUPPORTED_NETWORKS: Record<string, { chain: Chain; usdc: string }> = {
-  'eip155:8453':  { chain: base, usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
-  'eip155:84532': { chain: baseSepolia, usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
+// usdcName differs: mainnet "USD Coin", testnet "USDC" (for EIP-712 domain)
+const SUPPORTED_NETWORKS: Record<string, { chain: Chain; usdc: string; usdcName: string }> = {
+  'eip155:8453':  { chain: base, usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', usdcName: 'USD Coin' },
+  'eip155:84532': { chain: baseSepolia, usdc: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', usdcName: 'USDC' },
 }
 const X402_NETWORK = process.env.X402_NETWORK || 'eip155:8453'
 const networkConfig = SUPPORTED_NETWORKS[X402_NETWORK]
@@ -107,6 +108,13 @@ const SWARM_GATEWAY = process.env.SWARM_GATEWAY_URL || 'https://bee.fairdrop.xyz
 
 // === Facilitator client ===
 
+// x402.org facilitator v2 has a bug for EVM chains — use v1 format instead.
+// v1 uses plain network names; v2 uses CAIP-2 (eip155:CHAIN_ID).
+const V1_NETWORK_NAMES: Record<string, string> = {
+  'eip155:8453':  'base',
+  'eip155:84532': 'base-sepolia',
+}
+
 interface SettlementResult {
   success: boolean
   txHash?: string
@@ -115,32 +123,60 @@ interface SettlementResult {
   error?: string
 }
 
-async function verifyAndSettle(paymentHeader: string, expectedAmount: string): Promise<SettlementResult> {
+async function verifyAndSettle(
+  paymentHeader: string,
+  paymentRequirements: Record<string, unknown>,
+  expectedAmount: string
+): Promise<SettlementResult> {
   try {
+    // Decode the base64-encoded payment payload from the X-Payment header
+    let paymentPayload: any
+    try {
+      paymentPayload = JSON.parse(Buffer.from(paymentHeader, 'base64').toString('utf8'))
+    } catch {
+      return { success: false, error: 'Invalid payment header: not valid base64 JSON' }
+    }
+
+    // The x402.org facilitator reads x402Version from inside paymentPayload.
+    // v2 has a bug for EVM chains, so rewrite to v1 format:
+    // - x402Version: 1 (inside paymentPayload)
+    // - network: plain name (e.g. "base-sepolia" not "eip155:84532")
+    // - paymentRequirements.extra must include EIP-712 domain {name, version}
+    const v1Network = V1_NETWORK_NAMES[X402_NETWORK] || X402_NETWORK
+    const v1Payload = { ...paymentPayload, x402Version: 1, network: v1Network }
+
     const res = await fetch(`${FACILITATOR_URL}/settle`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ payment: paymentHeader }),
+      body: JSON.stringify({
+        paymentPayload: v1Payload,
+        paymentRequirements: {
+          ...paymentRequirements,
+          network: v1Network,
+          extra: { name: networkConfig.usdcName, version: '2' },
+        },
+      }),
     })
     if (!res.ok) {
-      return { success: false, error: `Facilitator: ${res.status}` }
+      const errBody = await res.text().catch(() => '')
+      return { success: false, error: `Facilitator: ${res.status} ${errBody}` }
     }
     const data = await res.json() as any
-    const txHash = data.txHash || data.transaction?.hash
-    const buyerAddress = data.payerAddress || data.from
-    const settledAmount = data.amount || data.value
+
+    if (!data.success) {
+      return { success: false, error: data.errorMessage || data.errorReason || 'Facilitator rejected payment' }
+    }
+
+    const txHash = data.transaction
+    const buyerAddress = data.payer
+    // The facilitator doesn't return the amount directly — trust the signed authorization
+    const settledAmount = paymentPayload?.payload?.authorization?.value || expectedAmount
 
     if (!txHash || !/^0x[0-9a-f]{64}$/i.test(txHash)) {
-      return { success: false, error: 'Invalid txHash format from facilitator' }
+      return { success: false, error: `Invalid transaction hash from facilitator: ${txHash}` }
     }
     if (!buyerAddress) {
-      return { success: false, error: 'No buyer address from facilitator' }
-    }
-    if (!settledAmount) {
-      return { success: false, error: 'Facilitator did not return settled amount — cannot verify payment' }
-    }
-    if (BigInt(settledAmount) < BigInt(expectedAmount)) {
-      return { success: false, error: `Underpayment: settled ${settledAmount} but skill costs ${expectedAmount}` }
+      return { success: false, error: 'No payer address from facilitator' }
     }
 
     return { success: true, txHash, buyerAddress, settledAmount }
@@ -158,7 +194,7 @@ function create402Response(skillId: string, price: string, seller: string, resou
       maxAmountRequired: price,
       resource,
       description: `Purchase skill: ${skillId}`,
-      payTo: PAYMENT_PROXY,
+      payTo: PAYMENT_PROXY || seller,
       asset: networkConfig.usdc,
       extra: { seller, skillId },
     }],
@@ -322,7 +358,8 @@ export function x402DownloadHandler(db: AgentsDatabase) {
     }
 
     // Verify and settle payment via Coinbase facilitator
-    const settlement = await verifyAndSettle(paymentHeader, price)
+    const paymentReqs = create402Response(req.params.id, price, skill.seller, req.originalUrl)
+    const settlement = await verifyAndSettle(paymentHeader, paymentReqs.paymentRequirements[0], price)
     if (!settlement.success) {
       res.status(402).json({
         error: 'Payment verification failed',
