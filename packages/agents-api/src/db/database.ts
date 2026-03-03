@@ -3,10 +3,21 @@
  */
 
 import Database from 'better-sqlite3'
+import Ajv from 'ajv'
+import * as crypto from 'crypto'
 import { readFileSync } from 'fs'
 import { mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+
+function encryptContentKey(keyHex: string, masterSecretHex: string): string {
+  const master = Buffer.from(masterSecretHex, 'hex')
+  const iv = crypto.randomBytes(12)
+  const cipher = crypto.createCipheriv('aes-256-gcm', master, iv)
+  const ct = Buffer.concat([cipher.update(keyHex, 'utf8'), cipher.final()])
+  const tag = cipher.getAuthTag()
+  return Buffer.concat([iv, tag, ct]).toString('base64')
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -43,6 +54,57 @@ export class AgentsDatabase {
     if (!skillCols.some(c => c.name === 'encrypted_data_ref')) {
       this.db.exec("ALTER TABLE skills ADD COLUMN encrypted_data_ref TEXT DEFAULT ''")
     }
+    // Add product_type and metadata columns for data product type registry
+    if (!skillCols.some(c => c.name === 'product_type')) {
+      this.db.exec("ALTER TABLE skills ADD COLUMN product_type TEXT")
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_skills_product_type ON skills(product_type)')
+    }
+    if (!skillCols.some(c => c.name === 'metadata')) {
+      this.db.exec("ALTER TABLE skills ADD COLUMN metadata TEXT")
+    }
+
+    // x402 payment method and encrypted content key
+    const x402Cols = this.db.pragma('table_info(skills)') as Array<{ name: string }>
+
+    if (!x402Cols.some(c => c.name === 'payment_method')) {
+      this.db.exec("ALTER TABLE skills ADD COLUMN payment_method TEXT NOT NULL DEFAULT 'escrow'")
+      this.db.exec('CREATE INDEX IF NOT EXISTS idx_skills_payment_method ON skills(payment_method)')
+    }
+    if (!x402Cols.some(c => c.name === 'x402_content_key')) {
+      this.db.exec("ALTER TABLE skills ADD COLUMN x402_content_key TEXT")
+    }
+
+    // x402_payments table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS x402_payments (
+        id TEXT PRIMARY KEY,
+        skill_id TEXT NOT NULL,
+        buyer_address TEXT NOT NULL,
+        seller_address TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        fee TEXT NOT NULL DEFAULT '0',
+        tx_hash TEXT NOT NULL UNIQUE,
+        settled_at INTEGER NOT NULL,
+        FOREIGN KEY (skill_id) REFERENCES skills(id)
+      )
+    `)
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_x402_payments_skill ON x402_payments(skill_id)')
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_x402_payments_buyer ON x402_payments(buyer_address)')
+
+    // pending_forwards table
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_forwards (
+        payment_id TEXT PRIMARY KEY,
+        skill_id TEXT NOT NULL,
+        seller TEXT NOT NULL,
+        amount TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        forward_tx_hash TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER,
+        FOREIGN KEY (payment_id) REFERENCES x402_payments(id)
+      )
+    `)
   }
 
   // === Monitor State ===
@@ -605,18 +667,31 @@ export class AgentsDatabase {
     delivery?: string
     contentHash?: string
     encryptedDataRef?: string
+    productType?: string
+    metadata?: string
+    paymentMethod?: string
+    x402ContentKey?: string
     createdAt: number
   }): boolean {
     try {
+      let encryptedKey: string | null = null
+      if (skill.x402ContentKey) {
+        const secret = process.env.X402_CONTENT_KEY_SECRET
+        if (!secret) throw new Error('X402_CONTENT_KEY_SECRET not set')
+        encryptedKey = encryptContentKey(skill.x402ContentKey, secret)
+      }
+
       this.db.prepare(
-        `INSERT INTO skills (id, seller, seller_agent_id, title, description, long_description, category, price, price_token, tags, delivery, content_hash, encrypted_data_ref, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO skills (id, seller, seller_agent_id, title, description, long_description, category, price, price_token, tags, delivery, content_hash, encrypted_data_ref, product_type, metadata, payment_method, x402_content_key, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         skill.id, skill.seller.toLowerCase(), skill.sellerAgentId ?? 0,
         skill.title, skill.description ?? '', skill.longDescription ?? '',
         skill.category ?? '', skill.price ?? '0', skill.priceToken ?? 'ETH',
         JSON.stringify(skill.tags ?? []), skill.delivery ?? 'instant',
-        skill.contentHash ?? '', skill.encryptedDataRef ?? '', skill.createdAt,
+        skill.contentHash ?? '', skill.encryptedDataRef ?? '',
+        skill.productType ?? null, skill.metadata ?? null,
+        skill.paymentMethod ?? 'escrow', encryptedKey, skill.createdAt,
       )
       return true
     } catch {
@@ -628,12 +703,14 @@ export class AgentsDatabase {
     return this.db.prepare('SELECT * FROM skills WHERE id = ?').get(id) as SkillRow | undefined
   }
 
-  listSkills(opts: { seller?: string; category?: string; status?: string; limit?: number; offset?: number }): SkillRow[] {
+  listSkills(opts: { seller?: string; category?: string; status?: string; productType?: string; paymentMethod?: string; limit?: number; offset?: number }): SkillRow[] {
     const conditions: string[] = []
     const values: unknown[] = []
 
     if (opts.seller) { conditions.push('seller = ?'); values.push(opts.seller.toLowerCase()) }
     if (opts.category) { conditions.push('category = ?'); values.push(opts.category) }
+    if (opts.productType) { conditions.push('product_type = ?'); values.push(opts.productType) }
+    if (opts.paymentMethod) { conditions.push('payment_method = ?'); values.push(opts.paymentMethod) }
     conditions.push('status = ?'); values.push(opts.status ?? 'active')
 
     const where = `WHERE ${conditions.join(' AND ')}`
@@ -642,12 +719,14 @@ export class AgentsDatabase {
     ).all(...values, opts.limit ?? 50, opts.offset ?? 0) as SkillRow[]
   }
 
-  countSkills(opts: { seller?: string; category?: string; status?: string }): number {
+  countSkills(opts: { seller?: string; category?: string; status?: string; productType?: string; paymentMethod?: string }): number {
     const conditions: string[] = []
     const values: unknown[] = []
 
     if (opts.seller) { conditions.push('seller = ?'); values.push(opts.seller.toLowerCase()) }
     if (opts.category) { conditions.push('category = ?'); values.push(opts.category) }
+    if (opts.productType) { conditions.push('product_type = ?'); values.push(opts.productType) }
+    if (opts.paymentMethod) { conditions.push('payment_method = ?'); values.push(opts.paymentMethod) }
     conditions.push('status = ?'); values.push(opts.status ?? 'active')
 
     const where = `WHERE ${conditions.join(' AND ')}`
@@ -736,6 +815,88 @@ export class AgentsDatabase {
       result.set(row.skill_id, { available: row.available_count, totalSales: row.total_sales })
     }
     return result
+  }
+
+  // === x402 Payments ===
+
+  recordX402Payment(payment: {
+    id: string
+    skillId: string
+    buyerAddress: string
+    sellerAddress: string
+    amount: string
+    fee: string
+    txHash: string
+    settledAt: number
+  }): boolean {
+    this.db.prepare(
+      `INSERT INTO x402_payments (id, skill_id, buyer_address, seller_address, amount, fee, tx_hash, settled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      payment.id, payment.skillId, payment.buyerAddress.toLowerCase(),
+      payment.sellerAddress.toLowerCase(), payment.amount, payment.fee,
+      payment.txHash, payment.settledAt,
+    )
+    return true
+  }
+
+  listX402Payments(skillId: string): any[] {
+    return this.db.prepare(
+      'SELECT * FROM x402_payments WHERE skill_id = ? ORDER BY settled_at DESC'
+    ).all(skillId)
+  }
+
+  getX402PaymentByTxHash(txHash: string): any | undefined {
+    return this.db.prepare(
+      'SELECT * FROM x402_payments WHERE tx_hash = ?'
+    ).get(txHash)
+  }
+
+  listX402PaymentsBySeller(sellerAddress: string, limit = 50): any[] {
+    return this.db.prepare(
+      'SELECT * FROM x402_payments WHERE seller_address = ? ORDER BY settled_at DESC LIMIT ?'
+    ).all(sellerAddress.toLowerCase(), limit)
+  }
+
+  getPendingForwardsBySeller(sellerAddress: string): any[] {
+    return this.db.prepare(
+      "SELECT * FROM pending_forwards WHERE seller = ? AND status = 'pending'"
+    ).all(sellerAddress.toLowerCase())
+  }
+
+  recordPendingForward(forward: {
+    paymentId: string
+    skillId: string
+    seller: string
+    amount: string
+  }): void {
+    const now = Math.floor(Date.now() / 1000)
+    this.db.prepare(
+      `INSERT INTO pending_forwards (payment_id, skill_id, seller, amount, status, created_at)
+       VALUES (?, ?, ?, ?, 'pending', ?)`
+    ).run(forward.paymentId, forward.skillId, forward.seller.toLowerCase(), forward.amount, now)
+  }
+
+  updatePendingForward(paymentId: string, status: string, txHash?: string): void {
+    const now = Math.floor(Date.now() / 1000)
+    this.db.prepare(
+      'UPDATE pending_forwards SET status = ?, forward_tx_hash = ?, updated_at = ? WHERE payment_id = ?'
+    ).run(status, txHash ?? null, now, paymentId)
+  }
+
+  getPendingForwards(): Array<{
+    payment_id: string
+    skill_id: string
+    seller: string
+    amount: string
+    status: string
+    forward_tx_hash: string | null
+    created_at: number
+    updated_at: number | null
+  }> {
+    return this.db.prepare(
+      "SELECT * FROM pending_forwards WHERE status = 'pending' ORDER BY created_at ASC"
+    ).all() as any[]
   }
 
   // === Votes ===
@@ -1085,6 +1246,55 @@ export class AgentsDatabase {
       `SELECT * FROM bounties ${where} ${orderBy} LIMIT ? OFFSET ?`
     ).all(...values, limit, offset) as BountyRow[]
   }
+
+  // === Product Types ===
+
+  getProductType(id: string): ProductTypeRow | undefined {
+    return this.db.prepare('SELECT * FROM product_types WHERE id = ?').get(id) as ProductTypeRow | undefined
+  }
+
+  createProductType(type: {
+    id: string
+    name: string
+    description?: string
+    schema: string
+    contentFormat?: string
+    freeDownloadAllowed?: number
+    creator: string
+    createdAt: number
+  }): boolean {
+    try {
+      this.db.prepare(
+        `INSERT INTO product_types (id, name, description, schema, content_format, free_download_allowed, creator, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        type.id, type.name, type.description ?? '', type.schema,
+        type.contentFormat ?? 'binary', type.freeDownloadAllowed ?? 1,
+        type.creator, type.createdAt,
+      )
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  listProductTypes(): ProductTypeRow[] {
+    return this.db.prepare('SELECT * FROM product_types ORDER BY created_at ASC').all() as ProductTypeRow[]
+  }
+
+  validateMetadata(metadata: unknown, schemaStr: string): string | null {
+    try {
+      const ajv = new Ajv()
+      const schema = JSON.parse(schemaStr)
+      const validate = ajv.compile(schema)
+      if (!validate(metadata)) {
+        return validate.errors?.map((e: any) => `${e.instancePath} ${e.message}`).join('; ') ?? 'Validation failed'
+      }
+      return null
+    } catch (err) {
+      return `Schema validation error: ${err instanceof Error ? err.message : err}`
+    }
+  }
 }
 
 // Row types
@@ -1219,9 +1429,24 @@ export interface SkillRow {
   content_hash: string
   encrypted_data_ref: string
   escrow_id: number | null
+  product_type: string | null
+  metadata: string | null
+  payment_method: string
+  x402_content_key: string | null
   status: string
   total_sales: number
   avg_rating: number
+  created_at: number
+}
+
+export interface ProductTypeRow {
+  id: string
+  name: string
+  description: string
+  schema: string
+  content_format: string
+  free_download_allowed: number
+  creator: string
   created_at: number
 }
 
