@@ -183,6 +183,62 @@ export const downloadContentTool = {
   },
 }
 
+export const downloadFreeTool = {
+  name: 'df_download_free',
+  description:
+    'Download unencrypted content from Swarm by reference. For free packs that skip escrow.',
+  inputSchema: {
+    type: 'object' as const,
+    properties: {
+      reference: {
+        type: 'string',
+        description: 'Swarm content reference',
+      },
+      output_path: {
+        type: 'string',
+        description: 'Local file path to write content',
+      },
+      expected_hash: {
+        type: 'string',
+        description: 'Expected keccak256 hash for verification',
+      },
+    },
+    required: ['reference', 'output_path'],
+  },
+  async execute(args: { reference: string; output_path: string; expected_hash?: string }) {
+    const SWARM_URL = process.env.BEE_API_URL || 'https://bee.fairdrop.xyz'
+
+    const response = await fetch(`${SWARM_URL}/bytes/${args.reference}`)
+    if (!response.ok) {
+      throw new Error(`Swarm download failed (${response.status}): ${response.statusText}`)
+    }
+
+    const content = Buffer.from(await response.arrayBuffer())
+
+    // Verify hash if provided
+    if (args.expected_hash) {
+      const computedHash = keccak256(content as `0x${string}`)
+      if (computedHash !== args.expected_hash) {
+        throw new Error(
+          `Content verification failed. Expected hash ${args.expected_hash}, got ${computedHash}`,
+        )
+      }
+    }
+
+    const fs = await import('fs')
+    const path = await import('path')
+    fs.mkdirSync(path.dirname(args.output_path), { recursive: true })
+    fs.writeFileSync(args.output_path, content)
+
+    return {
+      success: true,
+      output_path: args.output_path,
+      size_bytes: content.length,
+      hash_verified: !!args.expected_hash,
+    }
+  },
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const h = hex.startsWith('0x') ? hex.slice(2) : hex
   const bytes = new Uint8Array(h.length / 2)

@@ -41,7 +41,7 @@ export const browseSkillsTool = {
 
 export const publishSkillTool = {
   name: 'df_publish_skill',
-  description: 'Publish a skill listing on the marketplace (after escrow creation).',
+  description: 'Publish a skill listing on the marketplace (after escrow creation). Requires active session with private key for signing.',
   inputSchema: {
     type: 'object' as const,
     properties: {
@@ -57,6 +57,11 @@ export const publishSkillTool = {
         items: { type: 'string' },
         description: 'Tags for discovery',
       },
+      product_type: { type: 'string', description: 'Data product type (e.g. "engram-pack")' },
+      metadata: {
+        type: 'object',
+        description: 'Product type-specific metadata (validated against type schema)',
+      },
     },
     required: ['title', 'description', 'category', 'price_wei', 'escrow_id', 'seller_address', 'content_hash'],
   },
@@ -69,22 +74,32 @@ export const publishSkillTool = {
     seller_address: string
     content_hash: string
     tags?: string[]
+    product_type?: string
+    metadata?: Record<string, unknown>
   }) {
-    // Map snake_case input to API's expected field names
+    const { session } = await import('../session.js')
+    const { signRequest } = await import('../signing.js')
+    const privateKey = session.requirePrivateKey()
+
+    const body: Record<string, unknown> = {
+      seller: args.seller_address,
+      title: args.title,
+      description: args.description,
+      category: args.category,
+      price: args.price_wei,
+      priceToken: 'ETH',
+      escrowId: parseInt(args.escrow_id, 10),
+      contentHash: args.content_hash,
+      tags: args.tags || [],
+    }
+    if (args.product_type) body.product_type = args.product_type
+    if (args.metadata) body.metadata = args.metadata
+
+    const headers = signRequest(body, privateKey)
     const response = await fetch(`${MARKETPLACE_URL}/api/v1/skills`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        seller: args.seller_address,
-        title: args.title,
-        description: args.description,
-        category: args.category,
-        price: args.price_wei,
-        priceToken: 'ETH',
-        escrowId: parseInt(args.escrow_id, 10),
-        contentHash: args.content_hash,
-        tags: args.tags || [],
-      }),
+      headers,
+      body: JSON.stringify(body),
     })
 
     if (!response.ok) {

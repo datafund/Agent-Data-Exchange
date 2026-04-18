@@ -198,6 +198,18 @@ CREATE TABLE IF NOT EXISTS monitor_state (
   last_updated TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS product_types (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  schema TEXT NOT NULL DEFAULT '{}',
+  content_format TEXT NOT NULL DEFAULT 'binary',
+  free_download_allowed INTEGER NOT NULL DEFAULT 1,
+  creator TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_product_types_id ON product_types(id);
+
 CREATE TABLE IF NOT EXISTS waitlist (
   id TEXT PRIMARY KEY,
   email TEXT NOT NULL,

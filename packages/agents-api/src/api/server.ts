@@ -11,6 +11,7 @@ import { escrowRoutes } from './routes/escrows.js'
 import { statsRoutes } from './routes/stats.js'
 import { bountyRoutes } from './routes/bounties.js'
 import { skillRoutes } from './routes/skills.js'
+import { productTypeRoutes } from './routes/product-types.js'
 import { marketRoutes } from './routes/market.js'
 import { dashboardRoutes } from './routes/dashboard.js'
 import { waitlistRoutes } from './routes/waitlist.js'
@@ -61,6 +62,7 @@ export function createServer(db: AgentsDatabase, indexer: EscrowIndexer) {
   v1.use('/escrows', escrowRoutes(db))
   v1.use('/bounties', bountyRoutes(db))
   v1.use('/skills', skillRoutes(db))
+  v1.use('/product-types', productTypeRoutes(db))
   v1.use('/market', marketRoutes(db))
   v1.use('/stats', statsRoutes(db, indexer))
   v1.use('/dashboard', dashboardRoutes(db, indexer))
